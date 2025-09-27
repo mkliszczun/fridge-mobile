@@ -18,6 +18,8 @@ export default function HomeScreen() {
           onPress={() => Alert.alert("Usuń produkt", "Do podłączenia później")} />
         <MenuCard title="Otwórz produkt" subtitle="Zmienimy datę po otwarciu"
           onPress={() => Alert.alert("Otwórz produkt", "Do podłączenia później")} />
+        <MenuCard title="Testowy przycisk" subtitle="Sprawdzam aktualizację"
+          onPress={() => {}} />
       </View>
     </View>
   );
