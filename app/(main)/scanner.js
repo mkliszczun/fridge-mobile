@@ -11,14 +11,16 @@ import {
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-
-const API_URL = "http://192.168.0.123:8080/api/connect"; // podmień na swoje
+import { API_BASE_URL } from "../../constants/api";
+import { useAuth } from "../../context/AuthContext";
+const API_URL = `${API_BASE_URL}/integration/connect`;
 
 export default function ScannerScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [ready, setReady] = useState(false);
   const [scanned, setScanned] = useState(null);
   const [sending, setSending] = useState(false);
+  const { token } = useAuth();
   const router = useRouter();
 
   useEffect(() => { if (!permission) requestPermission(); }, [permission]);
@@ -56,7 +58,10 @@ export default function ScannerScreen() {
     try {
       const res = await fetch(API_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ ean: scanned.data }),
       });
       let payload = null;
