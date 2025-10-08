@@ -39,6 +39,18 @@ export default function HomeScreen() {
               subtitle="Nowy produkt bazowy"
             />
           </Link>
+          <Link href="/fridge" asChild>
+            <MenuCard
+              title="Lodówka"
+              subtitle="Zawartość aktywnej"
+            />
+          </Link>
+          <Link href="/add-fridge-item" asChild>
+            <MenuCard
+              title="Dodaj produkt do lodówki"
+              subtitle="Wybierz z katalogu"
+            />
+          </Link>
           <Link href="/products" asChild>
             <MenuCard
               title="Katalog produktów"
