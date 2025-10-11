@@ -15,7 +15,7 @@ import {
   TouchableWithoutFeedback,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
 
@@ -70,6 +70,12 @@ const resolveUnitValue = (selection) => {
 export default function AddFridgeItemScreen() {
   const router = useRouter();
   const { token, activeFridge } = useAuth();
+  const params = useLocalSearchParams();
+
+  const readParam = (value) => {
+    if (Array.isArray(value)) return value[0];
+    return value ?? null;
+  };
 
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
@@ -87,6 +93,7 @@ export default function AddFridgeItemScreen() {
   const [dateModalTarget, setDateModalTarget] = useState(null);
   const [tempDate, setTempDate] = useState({ year: null, month: null, day: null });
   const [submitting, setSubmitting] = useState(false);
+  const [prefillApplied, setPrefillApplied] = useState(false);
 
   const headers = useMemo(
     () => ({
@@ -120,6 +127,52 @@ export default function AddFridgeItemScreen() {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  useEffect(() => {
+    if (prefillApplied || productsLoading) return;
+
+    const productIdParam = readParam(params?.productId) ? String(readParam(params?.productId)) : null;
+    if (!productIdParam) return;
+
+    let matchedProduct = products.find((p) => String(p?.id) === productIdParam);
+
+    const productNameParam = readParam(params?.productName);
+    const productTypeParam = readParam(params?.productType);
+    const defaultUnitParam = readParam(params?.defaultUnit);
+
+    if (!matchedProduct && (productNameParam || defaultUnitParam)) {
+      let parsedUnit = null;
+      if (typeof defaultUnitParam === "string" && defaultUnitParam) {
+        try {
+          parsedUnit = JSON.parse(defaultUnitParam);
+        } catch {}
+      }
+      matchedProduct = {
+        id: productIdParam,
+        name: productNameParam || "",
+        productType: productTypeParam || null,
+        defaultUnit: parsedUnit,
+      };
+    }
+
+    if (matchedProduct) {
+      const normalized = normalizeSelection(matchedProduct);
+      setSelectedProduct(normalized);
+      if (!customName.trim()) setCustomName(matchedProduct.name || "");
+
+      const unitCandidate = matchedProduct.defaultUnit;
+      if (unitCandidate) {
+        setSelectedUnit(normalizeSelection(unitCandidate));
+      } else if (defaultUnitParam) {
+        try {
+          const parsed = JSON.parse(defaultUnitParam);
+          if (parsed) setSelectedUnit(normalizeSelection(parsed));
+        } catch {}
+      }
+      if (!amount) setAmount("1");
+      setPrefillApplied(true);
+    }
+  }, [params, products, productsLoading, amount, customName, prefillApplied]);
 
   const handleSubmit = async () => {
     if (!activeFridge) {
