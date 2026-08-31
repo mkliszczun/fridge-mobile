@@ -13,12 +13,13 @@ import {
   Platform,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
 
 export default function AddProductScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { token } = useAuth();
   const [form, setForm] = useState({ name: "", ean: "", defaultUnit: "" });
   const [selectedType, setSelectedType] = useState(null);
@@ -32,6 +33,9 @@ export default function AddProductScreen() {
   const [showUnitPicker, setShowUnitPicker] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [prefillApplied, setPrefillApplied] = useState(false);
+  const [brand, setBrand] = useState("");
+  const [categoryHints, setCategoryHints] = useState([]);
 
   const headers = useMemo(
     () => ({
@@ -40,6 +44,11 @@ export default function AddProductScreen() {
     }),
     [token]
   );
+
+  const readParam = (value) => {
+    if (Array.isArray(value)) return value[0];
+    return value ?? null;
+  };
 
   const loadTypes = useCallback(async () => {
     setTypesLoading(true);
@@ -95,6 +104,51 @@ export default function AddProductScreen() {
     loadTypes();
     loadUnits();
   }, [loadTypes, loadUnits]);
+
+  useEffect(() => {
+    if (prefillApplied) return;
+
+    const nameParam = readParam(params?.prefillName);
+    const eanParam = readParam(params?.prefillEan);
+    const brandParam = readParam(params?.prefillBrand);
+    const categoriesParam = readParam(params?.prefillCategories);
+
+    if (!nameParam && !eanParam && !brandParam && !categoriesParam) return;
+
+    setForm((prev) => ({
+      ...prev,
+      name: nameParam ? String(nameParam) : prev.name,
+      ean: eanParam ? String(eanParam) : prev.ean,
+    }));
+
+    if (brandParam) setBrand(String(brandParam));
+
+    if (typeof categoriesParam === "string" && categoriesParam) {
+      try {
+        const parsed = JSON.parse(categoriesParam);
+        if (Array.isArray(parsed)) setCategoryHints(parsed);
+      } catch {}
+    }
+
+    setPrefillApplied(true);
+  }, [params, prefillApplied]);
+
+  useEffect(() => {
+    if (!prefillApplied || !types.length || selectedType) return;
+    if (!categoryHints.length) return;
+
+    const match = types.find((type) => {
+      const label = getDisplayName(type)?.toLowerCase();
+      if (!label) return false;
+      return categoryHints.some((tag) => {
+        if (!tag) return false;
+        const normalized = String(tag).toLowerCase().split(":").pop();
+        return normalized && label.includes(normalized);
+      });
+    });
+
+    if (match) setSelectedType(normalizeSelection(match));
+  }, [prefillApplied, types, selectedType, categoryHints]);
 
   const updateForm = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -281,6 +335,13 @@ const resolveUnitValue = (selection) => {
         </View>
 
         <View style={styles.card}>
+          {brand ? (
+            <View style={styles.brandBox}>
+              <Text style={styles.brandLabel}>Marka</Text>
+              <Text style={styles.brandValue}>{brand}</Text>
+            </View>
+          ) : null}
+
           <Text style={styles.label}>Nazwa</Text>
           <TextInput
             placeholder="np. Jogurt naturalny"
@@ -540,4 +601,11 @@ const styles = StyleSheet.create({
   typeOptionPressed: { opacity: 0.8 },
   typeOptionText: { fontSize: 15, color: "#3F3116" },
   typeOptionTextSelected: { color: "#1F6FEB", fontWeight: "700" },
+  brandBox: {
+    backgroundColor: "rgba(31,111,235,0.08)",
+    borderRadius: 12,
+    padding: 12,
+  },
+  brandLabel: { fontSize: 12, fontWeight: "600", color: "#1F3B6B" },
+  brandValue: { fontSize: 14, fontWeight: "700", color: "#1F3B6B" },
 });
