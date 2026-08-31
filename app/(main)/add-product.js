@@ -11,9 +11,12 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { StatusBar } from "expo-status-bar";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
 
@@ -319,101 +322,168 @@ const resolveUnitValue = (selection) => {
 
   return (
     <LinearGradient
-      colors={["#FFF8E6", "#FFE19A", "#FFF3C9"]}
-      locations={[0, 0.55, 1]}
+      colors={["#F4F3EB", "#E8EEE9", "#F7F1E5"]}
+      locations={[0, 0.58, 1]}
       style={styles.background}
     >
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backLabel}>←</Text>
-          </Pressable>
-          <Text style={styles.title}>Dodaj produkt</Text>
-        </View>
+      <StatusBar style="dark" />
+      <View pointerEvents="none" style={[styles.glow, styles.glowTop]} />
+      <View pointerEvents="none" style={[styles.glow, styles.glowMiddle]} />
+      <View pointerEvents="none" style={[styles.glow, styles.glowBottom]} />
 
-        <View style={styles.card}>
-          {brand ? (
-            <View style={styles.brandBox}>
-              <Text style={styles.brandLabel}>Marka</Text>
-              <Text style={styles.brandValue}>{brand}</Text>
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+        <KeyboardAvoidingView
+          style={styles.keyboardView}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.header}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Wróć"
+                onPress={() => router.back()}
+                style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]}
+              >
+                <Text style={styles.backLabel}>‹</Text>
+              </Pressable>
+              <View style={styles.headerCopy}>
+                <Text style={styles.eyebrow}>KATALOG</Text>
+                <Text style={styles.title}>Dodaj produkt</Text>
+                <Text style={styles.headerSubtitle}>Uzupełnij dane produktu bazowego</Text>
+              </View>
             </View>
-          ) : null}
 
-          <Text style={styles.label}>Nazwa</Text>
-          <TextInput
-            placeholder="np. Jogurt naturalny"
-            value={form.name}
-            onChangeText={(value) => updateForm("name", value)}
-            style={styles.input}
-          />
+            <LinearGradient
+              colors={["rgba(255,255,251,0.94)", "rgba(246,247,240,0.82)"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.card}
+            >
+              {brand ? (
+                <View style={styles.brandBox}>
+                  <View style={styles.brandIcon}>
+                    <Text style={styles.brandIconText}>✓</Text>
+                  </View>
+                  <View style={styles.brandCopy}>
+                    <Text style={styles.brandLabel}>ROZPOZNANA MARKA</Text>
+                    <Text style={styles.brandValue}>{brand}</Text>
+                  </View>
+                </View>
+              ) : null}
 
-          <Text style={styles.label}>Kod EAN</Text>
-          <TextInput
-            placeholder="opcjonalnie"
-            value={form.ean}
-            keyboardType="number-pad"
-            onChangeText={(value) => updateForm("ean", value)}
-            style={styles.input}
-          />
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Nazwa produktu</Text>
+                <TextInput
+                  placeholder="np. Jogurt naturalny"
+                  placeholderTextColor="#98A3A2"
+                  value={form.name}
+                  onChangeText={(value) => updateForm("name", value)}
+                  style={styles.input}
+                  returnKeyType="next"
+                />
+              </View>
 
-          <Text style={styles.label}>Domyślna jednostka</Text>
-          <Pressable
-            style={[styles.selector, showUnitPicker && styles.selectorActive]}
-            onPress={() => setShowUnitPicker(true)}
-            disabled={unitsLoading}
-          >
-            {unitsLoading ? (
-              <ActivityIndicator color="#1F6FEB" />
-            ) : (
-              <Text style={styles.selectorText}>
-                {selectedUnit?.label || "Wybierz jednostkę"}
-              </Text>
-            )}
-          </Pressable>
-          {unitsError ? (
-            <Pressable style={styles.typesError} onPress={loadUnits}>
-              <Text style={styles.typesErrorText}>{unitsError}</Text>
-              <Text style={styles.typesErrorReload}>Dotknij, aby spróbować ponownie</Text>
-            </Pressable>
-          ) : null}
+              <View style={styles.fieldGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Kod EAN</Text>
+                  <Text style={styles.optionalLabel}>OPCJONALNIE</Text>
+                </View>
+                <TextInput
+                  placeholder="np. 5901234123457"
+                  placeholderTextColor="#98A3A2"
+                  value={form.ean}
+                  keyboardType="number-pad"
+                  onChangeText={(value) => updateForm("ean", value)}
+                  style={styles.input}
+                />
+              </View>
 
-          <Text style={styles.label}>Typ produktu</Text>
-          <Pressable
-            style={[styles.selector, showTypePicker && styles.selectorActive]}
-            onPress={() => setShowTypePicker(true)}
-            disabled={typesLoading}
-          >
-            {typesLoading ? (
-              <ActivityIndicator color="#1F6FEB" />
-            ) : (
-              <Text style={styles.selectorText}>
-                {selectedType?.label || "Wybierz typ"}
-              </Text>
-            )}
-          </Pressable>
-          {typesError ? (
-            <Pressable style={styles.typesError} onPress={loadTypes}>
-              <Text style={styles.typesErrorText}>{typesError}</Text>
-              <Text style={styles.typesErrorReload}>Dotknij, aby spróbować ponownie</Text>
-            </Pressable>
-          ) : null}
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Domyślna jednostka</Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.selector,
+                    showUnitPicker && styles.selectorActive,
+                    pressed && styles.selectorPressed,
+                  ]}
+                  onPress={() => setShowUnitPicker(true)}
+                  disabled={unitsLoading}
+                >
+                  {unitsLoading ? (
+                    <ActivityIndicator color="#304B54" />
+                  ) : (
+                    <>
+                      <Text style={[styles.selectorText, !selectedUnit && styles.selectorPlaceholder]}>
+                        {selectedUnit?.label || "Wybierz jednostkę"}
+                      </Text>
+                      <Text style={styles.selectorChevron}>⌄</Text>
+                    </>
+                  )}
+                </Pressable>
+                {unitsError ? (
+                  <Pressable style={styles.typesError} onPress={loadUnits}>
+                    <Text style={styles.typesErrorText}>{unitsError}</Text>
+                    <Text style={styles.typesErrorReload}>Dotknij, aby spróbować ponownie</Text>
+                  </Pressable>
+                ) : null}
+              </View>
 
-          <Pressable
-            style={[styles.submitButton, submitting && styles.submitDisabled]}
-            onPress={handleSubmit}
-            disabled={submitting}
-          >
-            {submitting ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.submitButtonText}>Zapisz produkt</Text>
-            )}
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Typ produktu</Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.selector,
+                    showTypePicker && styles.selectorActive,
+                    pressed && styles.selectorPressed,
+                  ]}
+                  onPress={() => setShowTypePicker(true)}
+                  disabled={typesLoading}
+                >
+                  {typesLoading ? (
+                    <ActivityIndicator color="#304B54" />
+                  ) : (
+                    <>
+                      <Text style={[styles.selectorText, !selectedType && styles.selectorPlaceholder]}>
+                        {selectedType?.label || "Wybierz typ"}
+                      </Text>
+                      <Text style={styles.selectorChevron}>⌄</Text>
+                    </>
+                  )}
+                </Pressable>
+                {typesError ? (
+                  <Pressable style={styles.typesError} onPress={loadTypes}>
+                    <Text style={styles.typesErrorText}>{typesError}</Text>
+                    <Text style={styles.typesErrorReload}>Dotknij, aby spróbować ponownie</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.submitButton,
+                  submitting && styles.submitDisabled,
+                  pressed && !submitting && styles.submitPressed,
+                ]}
+                onPress={handleSubmit}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Text style={styles.submitButtonText}>Zapisz produkt</Text>
+                    <Text style={styles.submitArrow}>›</Text>
+                  </>
+                )}
+              </Pressable>
+            </LinearGradient>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
 
       <Modal
         visible={showTypePicker}
@@ -423,6 +493,7 @@ const resolveUnitValue = (selection) => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.typeModal}>
+            <View style={styles.modalHandle} />
             <View style={styles.typeModalHeader}>
               <Text style={styles.typeModalTitle}>Wybierz typ produktu</Text>
               <Pressable onPress={() => setShowTypePicker(false)}>
@@ -431,7 +502,7 @@ const resolveUnitValue = (selection) => {
             </View>
             {typesLoading ? (
               <View style={styles.modalLoader}>
-                <ActivityIndicator size="large" color="#1F6FEB" />
+                <ActivityIndicator size="large" color="#304B54" />
               </View>
             ) : (
               <FlatList
@@ -458,6 +529,7 @@ const resolveUnitValue = (selection) => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.typeModal}>
+            <View style={styles.modalHandle} />
             <View style={styles.typeModalHeader}>
               <Text style={styles.typeModalTitle}>Wybierz jednostkę</Text>
               <Pressable onPress={() => setShowUnitPicker(false)}>
@@ -466,7 +538,7 @@ const resolveUnitValue = (selection) => {
             </View>
             {unitsLoading ? (
               <View style={styles.modalLoader}>
-                <ActivityIndicator size="large" color="#1F6FEB" />
+                <ActivityIndicator size="large" color="#304B54" />
               </View>
             ) : (
               <FlatList
@@ -490,122 +562,181 @@ const resolveUnitValue = (selection) => {
 
 const styles = StyleSheet.create({
   background: { flex: 1 },
-  container: { flex: 1, paddingTop: 52, paddingHorizontal: 20 },
+  safeArea: { flex: 1 },
+  keyboardView: { flex: 1 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 36 },
+  glow: { position: "absolute", borderRadius: 999 },
+  glowTop: { width: 260, height: 260, top: -80, right: -80, backgroundColor: "rgba(215,225,217,0.62)" },
+  glowMiddle: { width: 280, height: 280, top: 330, left: -150, backgroundColor: "rgba(249,224,174,0.28)" },
+  glowBottom: { width: 300, height: 300, bottom: -110, right: -130, backgroundColor: "rgba(189,214,211,0.42)" },
   header: {
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 24,
-    gap: 12,
+    alignItems: "flex-start",
+    gap: 15,
+    paddingBottom: 22,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,250,0.76)",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+    shadowColor: "#173746",
+    shadowOpacity: 0.13,
+    shadowRadius: 13,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 4,
   },
-  backLabel: { fontSize: 20, color: "#4A3B1B" },
-  title: { fontSize: 24, fontWeight: "700", color: "#4A3B1B" },
+  buttonPressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+  backLabel: { color: "#173746", fontSize: 40, lineHeight: 41, fontWeight: "300", marginTop: -2 },
+  headerCopy: { flex: 1, paddingTop: 1 },
+  eyebrow: { color: "#7D9098", fontSize: 12, lineHeight: 16, fontWeight: "800", letterSpacing: 1.4 },
+  title: {
+    color: "#151917",
+    fontSize: 35,
+    lineHeight: 40,
+    fontWeight: "700",
+    marginTop: 2,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: undefined }),
+  },
+  headerSubtitle: { color: "#667579", fontSize: 15, lineHeight: 21, marginTop: 4 },
   card: {
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    borderRadius: 20,
+    borderRadius: 28,
     padding: 22,
-    gap: 14,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 8 },
+    gap: 20,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+    shadowColor: "#173746",
+    shadowOpacity: 0.12,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 5,
   },
-  label: { fontWeight: "700", color: "#3F3116", fontSize: 14 },
+  fieldGroup: { gap: 8 },
+  labelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  label: { fontWeight: "700", color: "#33484D", fontSize: 14, lineHeight: 20 },
+  optionalLabel: { color: "#91A0A2", fontSize: 10, fontWeight: "800", letterSpacing: 1 },
   input: {
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    borderRadius: 12,
+    minHeight: 54,
+    backgroundColor: "rgba(255,255,255,0.68)",
+    borderRadius: 17,
     borderWidth: 1,
-    borderColor: "rgba(255,190,120,0.4)",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 15,
+    borderColor: "rgba(73,102,108,0.14)",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: "#182326",
   },
   selector: {
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    borderRadius: 12,
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(255,255,255,0.68)",
+    borderRadius: 17,
     borderWidth: 1,
-    borderColor: "rgba(255,190,120,0.4)",
-    paddingHorizontal: 14,
-    paddingVertical: 14,
+    borderColor: "rgba(73,102,108,0.14)",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
   },
-  selectorActive: {
-    borderColor: "#1F6FEB",
-  },
-  selectorText: { fontSize: 15, color: "#3F3116" },
+  selectorActive: { borderColor: "rgba(48,75,84,0.62)" },
+  selectorPressed: { opacity: 0.8 },
+  selectorText: { flex: 1, fontSize: 16, color: "#182326" },
+  selectorPlaceholder: { color: "#98A3A2" },
+  selectorChevron: { color: "#789097", fontSize: 22, lineHeight: 24, marginLeft: 12 },
   typesError: {
-    backgroundColor: "rgba(214,69,80,0.1)",
-    borderRadius: 12,
+    backgroundColor: "rgba(255,247,244,0.90)",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(164,73,62,0.12)",
     padding: 12,
     alignItems: "center",
   },
-  typesErrorText: { color: "#B71C1C", fontWeight: "600" },
-  typesErrorReload: { color: "#1F6FEB", fontWeight: "600", marginTop: 4 },
+  typesErrorText: { color: "#913D34", fontWeight: "600", textAlign: "center" },
+  typesErrorReload: { color: "#294B57", fontWeight: "800", marginTop: 4 },
   submitButton: {
-    backgroundColor: "#1F6FEB",
-    borderRadius: 14,
-    paddingVertical: 14,
+    minHeight: 58,
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: 10,
+    justifyContent: "center",
+    backgroundColor: "#304B54",
+    borderRadius: 18,
+    paddingHorizontal: 22,
+    paddingVertical: 16,
+    marginTop: 2,
+    shadowColor: "#19343D",
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 4,
   },
-  submitButtonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  submitButtonText: { color: "#fff", fontWeight: "800", fontSize: 17 },
+  submitArrow: { position: "absolute", right: 22, color: "#FFFFFF", fontSize: 31, lineHeight: 32, fontWeight: "300" },
   submitDisabled: { opacity: 0.7 },
+  submitPressed: { transform: [{ scale: 0.985 }], opacity: 0.92 },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(23,37,42,0.36)",
     justifyContent: "flex-end",
   },
   typeModal: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingBottom: 24,
-    maxHeight: "70%",
+    backgroundColor: "#F7F7F1",
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingBottom: 28,
+    maxHeight: "72%",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.9)",
   },
+  modalHandle: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0CE", marginTop: 10 },
   typeModalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 14,
+    paddingBottom: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#eee",
+    borderBottomColor: "rgba(55,78,84,0.16)",
   },
-  typeModalTitle: { fontSize: 18, fontWeight: "700" },
-  typeModalClose: { color: "#1F6FEB", fontWeight: "700" },
+  typeModalTitle: { color: "#182326", fontSize: 19, fontWeight: "800" },
+  typeModalClose: { color: "#365964", fontWeight: "800" },
   modalLoader: { padding: 20, alignItems: "center" },
   typeList: { paddingHorizontal: 20, paddingVertical: 12, gap: 8 },
   emptyTypeBox: { padding: 40, alignItems: "center" },
-  emptyTypeText: { color: "#666" },
+  emptyTypeText: { color: "#697A7D" },
   typeOption: {
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: "#F6F6FB",
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: "rgba(255,255,255,0.74)",
+    borderWidth: 1,
+    borderColor: "rgba(73,102,108,0.10)",
   },
   typeOptionSelected: {
-    backgroundColor: "rgba(31,111,235,0.12)",
+    backgroundColor: "rgba(208,225,222,0.70)",
     borderWidth: 1,
-    borderColor: "#1F6FEB",
+    borderColor: "rgba(48,75,84,0.44)",
   },
   typeOptionPressed: { opacity: 0.8 },
-  typeOptionText: { fontSize: 15, color: "#3F3116" },
-  typeOptionTextSelected: { color: "#1F6FEB", fontWeight: "700" },
+  typeOptionText: { fontSize: 16, color: "#33484D" },
+  typeOptionTextSelected: { color: "#203F49", fontWeight: "800" },
   brandBox: {
-    backgroundColor: "rgba(31,111,235,0.08)",
-    borderRadius: 12,
-    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    backgroundColor: "rgba(220,234,229,0.62)",
+    borderRadius: 17,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: "rgba(69,100,102,0.10)",
   },
-  brandLabel: { fontSize: 12, fontWeight: "600", color: "#1F3B6B" },
-  brandValue: { fontSize: 14, fontWeight: "700", color: "#1F3B6B" },
+  brandIcon: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: "#4F7472" },
+  brandIconText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
+  brandCopy: { flex: 1 },
+  brandLabel: { fontSize: 10, lineHeight: 14, fontWeight: "800", letterSpacing: 1, color: "#698083" },
+  brandValue: { fontSize: 15, lineHeight: 20, fontWeight: "800", color: "#27454C" },
 });

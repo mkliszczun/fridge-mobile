@@ -246,13 +246,19 @@ export default function HomeScreen() {
               <Text style={styles.settingsChevron}>›</Text>
             </Pressable>
 
-            <View style={[styles.settingsRow, styles.settingsRowDisabled]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Panel administratora"
+              style={styles.settingsRow}
+              onPress={() => navigateFromSettings("/admin")}
+            >
               <Text style={styles.settingsRowIcon}>⌘</Text>
               <View style={styles.settingsRowCopy}>
                 <Text style={styles.settingsRowTitle}>Panel administratora</Text>
-                <Text style={styles.settingsRowSubtitle}>Wkrótce</Text>
+                <Text style={styles.settingsRowSubtitle}>Produkty i domyślne terminy</Text>
               </View>
-            </View>
+              <Text style={styles.settingsChevron}>›</Text>
+            </Pressable>
 
             <Pressable
               accessibilityRole="button"

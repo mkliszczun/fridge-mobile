@@ -14,9 +14,17 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
+import { StatusBar } from "expo-status-bar";
 import { useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
+
+const CARD_GRADIENTS = {
+  normal: ["rgba(255,255,251,0.92)", "rgba(246,247,240,0.80)"],
+  warning: ["rgba(255,252,239,0.96)", "rgba(255,241,204,0.86)"],
+  expired: ["rgba(255,247,244,0.96)", "rgba(249,226,220,0.86)"],
+};
 
 const formatAmount = (value) => {
   if (value == null) return "-";
@@ -39,10 +47,38 @@ const getLabel = (value) => {
   );
 };
 
+const getExpiryValue = (item) => item?.effectiveExpireAt || item?.bestBeforeDate || null;
+
+const getLocalDate = (value) => {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+};
+
+const formatDate = (value) => {
+  const parsed = getLocalDate(value);
+  if (!parsed) return "Brak daty przydatności";
+  return new Intl.DateTimeFormat("pl-PL", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(parsed);
+};
+
+const formatProductCount = (count) => {
+  if (count === 1) return "1 produkt";
+  const lastDigit = count % 10;
+  const lastTwoDigits = count % 100;
+  if (lastDigit >= 2 && lastDigit <= 4 && (lastTwoDigits < 12 || lastTwoDigits > 14)) {
+    return `${count} produkty`;
+  }
+  return `${count} produktów`;
+};
+
 const dateStatus = (value) => {
-  if (!value) return "normal";
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return "normal";
+  const parsed = getLocalDate(value);
+  if (!parsed) return "normal";
 
   const today = new Date();
   const target = new Date(parsed);
@@ -51,9 +87,20 @@ const dateStatus = (value) => {
 
   const diff = (target - today) / (1000 * 60 * 60 * 24);
   if (diff < 0) return "expired";
-  if (diff <= 1) return "warning";
+  if (diff <= 3) return "warning";
   return "normal";
 };
+
+function ProductGlyph() {
+  return (
+    <View style={glyphStyles.wrap}>
+      <View style={glyphStyles.lid} />
+      <View style={glyphStyles.jar}>
+        <View style={glyphStyles.label} />
+      </View>
+    </View>
+  );
+}
 
 export default function FridgeScreen() {
   const router = useRouter();
@@ -217,6 +264,11 @@ export default function FridgeScreen() {
     setSelectedItem(null);
   }, []);
 
+  const closeAmountModal = useCallback(() => {
+    setAmountModalVisible(false);
+    setAmountModalItem(null);
+  }, []);
+
   const handleAction = useCallback(
     (action, itemOverride) => {
       const current = itemOverride || selectedItem;
@@ -280,146 +332,245 @@ export default function FridgeScreen() {
 
   return (
     <LinearGradient
-      colors={["#FFF8E6", "#FFE19A", "#FFF3C9"]}
-      locations={[0, 0.55, 1]}
+      colors={["#F4F3EB", "#E8EEE9", "#F7F1E5"]}
+      locations={[0, 0.58, 1]}
       style={styles.background}
     >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backLabel}>←</Text>
-          </Pressable>
-          <Text style={styles.title}>Twoja lodówka</Text>
-        </View>
+      <StatusBar style="dark" />
+      <View pointerEvents="none" style={[styles.glow, styles.glowTop]} />
+      <View pointerEvents="none" style={[styles.glow, styles.glowMiddle]} />
+      <View pointerEvents="none" style={[styles.glow, styles.glowBottom]} />
 
-        {!activeFridge ? (
-          <View style={styles.warningBox}>
-            <Text style={styles.warningTitle}>Brak aktywnej lodówki</Text>
-            <Text style={styles.warningSubtitle}>Wybierz lodówkę, aby zobaczyć jej zawartość.</Text>
-            <Pressable style={styles.warningAction} onPress={() => router.push("/fridges")}> 
-              <Text style={styles.warningActionText}>Przejdź do listy lodówek</Text>
+      <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+        <View style={styles.container}>
+          <View style={styles.header}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Wróć"
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.backButton, pressed && styles.buttonPressed]}
+            >
+              <Text style={styles.backLabel}>‹</Text>
             </Pressable>
+            <View style={styles.headerCopy}>
+              <Text style={styles.eyebrow}>SPIŻARNIA</Text>
+              <Text style={styles.title}>Moje produkty</Text>
+              <Text style={styles.headerSubtitle}>
+                {!activeFridge
+                  ? "Wybierz aktywną lodówkę"
+                  : loading
+                    ? "Sprawdzam zawartość..."
+                    : formatProductCount(items.length)}
+              </Text>
+            </View>
           </View>
-        ) : null}
 
-        {error ? (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>{error}</Text>
-            <Pressable onPress={() => loadItems()}>
-              <Text style={styles.retryText}>Spróbuj ponownie</Text>
-            </Pressable>
-          </View>
-        ) : null}
+          {!activeFridge ? (
+            <LinearGradient
+              colors={["rgba(255,252,239,0.96)", "rgba(255,241,204,0.84)"]}
+              style={styles.warningBox}
+            >
+              <Text style={styles.warningEyebrow}>BRAK AKTYWNEJ LODÓWKI</Text>
+              <Text style={styles.warningTitle}>Najpierw wybierz swoją lodówkę</Text>
+              <Text style={styles.warningSubtitle}>
+                Dopiero wtedy pokażemy jej produkty i terminy ważności.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [styles.warningAction, pressed && styles.buttonPressed]}
+                onPress={() => router.push("/fridges")}
+              >
+                <Text style={styles.warningActionText}>Moje lodówki</Text>
+                <Text style={styles.warningActionArrow}>›</Text>
+              </Pressable>
+            </LinearGradient>
+          ) : null}
 
-        {loading ? (
-          <View style={styles.loaderBox}>
-            <ActivityIndicator size="large" color="#1F6FEB" />
-          </View>
-        ) : (
-          <FlatList
-            data={items}
-            keyExtractor={(item, index) => String(item?.id ?? index)}
-            contentContainerStyle={styles.listContent}
-            refreshing={refreshing}
-            onRefresh={() => loadItems(true)}
-            ListEmptyComponent={() => (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyTitle}>Lodówka jest pusta</Text>
-                <Text style={styles.emptySubtitle}>Dodaj produkt, aby pojawił się na liście.</Text>
+          {error ? (
+            <View style={styles.errorBanner}>
+              <View style={styles.errorIcon}>
+                <Text style={styles.errorIconText}>!</Text>
               </View>
-            )}
-            renderItem={({ item }) => {
-              const status = dateStatus(item?.bestBeforeDate);
-              return (
-                <Pressable
-                  onLongPress={() => openContextMenu(item)}
-                  delayLongPress={1000}
-                  android_ripple={{ color: "rgba(0,0,0,0.05)" }}
-                  style={[
-                    styles.card,
-                    status === "expired" && styles.cardExpired,
-                    status === "warning" && styles.cardWarning,
-                  ]}
-                >
-                  <Text style={styles.productName}>
-                    {item?.customName || item?.name || item?.product?.name || item?.productName || "(bez nazwy)"}
-                  </Text>
-                  <Text style={styles.metaText}>
-                    Ilość: {formatAmount(item?.amount)} {getLabel(item?.unit)}
-                  </Text>
-                  <Text style={styles.metaText}>
-                    Ważne do: {item?.bestBeforeDate || "brak informacji"}
-                  </Text>
+              <View style={styles.errorCopy}>
+                <Text style={styles.errorText}>{error}</Text>
+                <Pressable onPress={() => loadItems()}>
+                  <Text style={styles.retryText}>Spróbuj ponownie</Text>
                 </Pressable>
-              );
-            }}
-          />
-        )}
-      </View>
+              </View>
+            </View>
+          ) : null}
+
+          {loading ? (
+            <View style={styles.loaderBox}>
+              <ActivityIndicator size="large" color="#304B54" />
+              <Text style={styles.loaderText}>Otwieram lodówkę...</Text>
+            </View>
+          ) : activeFridge ? (
+            <FlatList
+              data={items}
+              keyExtractor={(item, index) => String(item?.id ?? index)}
+              contentContainerStyle={styles.listContent}
+              showsVerticalScrollIndicator={false}
+              refreshing={refreshing}
+              onRefresh={() => loadItems(true)}
+              ListHeaderComponent={items.length ? (
+                <View style={styles.listHint}>
+                  <Text style={styles.listHintDot}>•</Text>
+                  <Text style={styles.listHintText}>Przytrzymaj produkt, aby go użyć lub wyrzucić</Text>
+                </View>
+              ) : null}
+              ListEmptyComponent={() => (
+                <LinearGradient
+                  colors={["rgba(255,255,251,0.92)", "rgba(246,247,240,0.80)"]}
+                  style={styles.emptyBox}
+                >
+                  <View style={styles.emptyIconBadge}>
+                    <ProductGlyph />
+                  </View>
+                  <Text style={styles.emptyTitle}>Tu jest jeszcze pusto</Text>
+                  <Text style={styles.emptySubtitle}>
+                    Zeskanuj produkt na ekranie Kuchnia, aby dodać go do lodówki.
+                  </Text>
+                </LinearGradient>
+              )}
+              renderItem={({ item }) => {
+                const expiryValue = getExpiryValue(item);
+                const status = dateStatus(expiryValue);
+                const productName =
+                  item?.customName || item?.name || item?.product?.name || item?.productName || "Bez nazwy";
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={productName}
+                    accessibilityHint="Przytrzymaj, aby wybrać akcję"
+                    onLongPress={() => openContextMenu(item)}
+                    delayLongPress={700}
+                    style={({ pressed }) => [styles.cardShell, pressed && styles.cardPressed]}
+                  >
+                    <LinearGradient
+                      colors={CARD_GRADIENTS[status]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.card}
+                    >
+                      <View style={styles.productIconBadge}>
+                        <ProductGlyph />
+                      </View>
+                      <View style={styles.productCopy}>
+                        <View style={styles.productHeadingRow}>
+                          <Text style={styles.productName} numberOfLines={2}>
+                            {productName}
+                          </Text>
+                          {status !== "normal" ? (
+                            <View style={[styles.statusBadge, status === "expired" && styles.statusBadgeExpired]}>
+                              <Text style={[styles.statusBadgeText, status === "expired" && styles.statusBadgeTextExpired]}>
+                                {status === "expired" ? "PO TERMINIE" : "WKRÓTCE"}
+                              </Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.amountText}>
+                          {formatAmount(item?.amount)} {getLabel(item?.unit)}
+                        </Text>
+                        <View style={styles.expiryRow}>
+                          <View style={[styles.expiryDot, status === "warning" && styles.expiryDotWarning, status === "expired" && styles.expiryDotExpired]} />
+                          <Text style={[styles.expiryText, status === "expired" && styles.expiryTextExpired]}>
+                            {formatDate(expiryValue)}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.cardMore}>•••</Text>
+                    </LinearGradient>
+                  </Pressable>
+                );
+              }}
+            />
+          ) : (
+            <View style={styles.listSpacer} />
+          )}
+        </View>
+      </SafeAreaView>
+
       <Modal transparent visible={contextVisible} animationType="fade" onRequestClose={closeContextMenu}>
         <View style={styles.contextOverlay}>
           <Pressable style={styles.contextBackdrop} onPress={closeContextMenu} />
-          <View style={styles.contextCard}>
-            <Text style={styles.contextTitle}>
-              {selectedItem?.customName || selectedItem?.name || selectedItem?.product?.name || "Produkt"}
-            </Text>
-            <Pressable style={styles.contextAction} onPress={() => handleAction("use", selectedItem)}>
-              <Text style={styles.contextActionText}>Użyj</Text>
+          <LinearGradient
+            colors={["rgba(255,255,251,0.98)", "rgba(239,244,240,0.96)"]}
+            style={styles.contextCard}
+          >
+            <View style={styles.modalHandle} />
+            <View style={styles.modalProductRow}>
+              <View style={styles.modalIconBadge}>
+                <ProductGlyph />
+              </View>
+              <View style={styles.modalProductCopy}>
+                <Text style={styles.modalEyebrow}>WYBRANY PRODUKT</Text>
+                <Text style={styles.contextTitle} numberOfLines={2}>
+                  {selectedItem?.customName || selectedItem?.name || selectedItem?.product?.name || "Produkt"}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.contextSubtitle}>Co chcesz zrobić?</Text>
+            <Pressable
+              style={({ pressed }) => [styles.contextAction, styles.contextActionPrimary, pressed && styles.buttonPressed]}
+              onPress={() => handleAction("use", selectedItem)}
+            >
+              <Text style={styles.contextActionPrimaryText}>Użyj produktu</Text>
+              <Text style={styles.contextActionPrimaryArrow}>›</Text>
             </Pressable>
-            <Pressable style={styles.contextAction} onPress={() => handleAction("throw", selectedItem)}>
-              <Text style={styles.contextActionText}>Wyrzuć</Text>
+            <Pressable
+              style={({ pressed }) => [styles.contextAction, styles.contextActionDanger, pressed && styles.buttonPressed]}
+              onPress={() => handleAction("throw", selectedItem)}
+            >
+              <Text style={styles.contextActionDangerText}>Wyrzuć produkt</Text>
             </Pressable>
-            <Pressable style={[styles.contextAction, styles.contextCancel]} onPress={closeContextMenu}>
-              <Text style={[styles.contextActionText, styles.contextCancelText]}>Anuluj</Text>
+            <Pressable style={styles.contextCancel} onPress={closeContextMenu}>
+              <Text style={styles.contextCancelText}>Anuluj</Text>
             </Pressable>
-          </View>
+          </LinearGradient>
         </View>
       </Modal>
 
-      <Modal transparent visible={amountModalVisible} animationType="fade" onRequestClose={() => setAmountModalVisible(false)}>
+      <Modal transparent visible={amountModalVisible} animationType="fade" onRequestClose={closeAmountModal}>
         <View style={styles.contextOverlay}>
-          <Pressable
-            style={styles.contextBackdrop}
-            onPress={() => {
-              setAmountModalVisible(false);
-              setAmountModalItem(null);
-            }}
-          />
-          <View style={styles.amountModal}>
-            <Text style={styles.contextTitle}>Podaj ilość do użycia</Text>
+          <Pressable style={styles.contextBackdrop} onPress={closeAmountModal} />
+          <LinearGradient
+            colors={["rgba(255,255,251,0.98)", "rgba(239,244,240,0.96)"]}
+            style={styles.amountModal}
+          >
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalEyebrow}>UŻYJ PRODUKTU</Text>
+            <Text style={styles.amountTitle}>Podaj ilość</Text>
             <Text style={styles.amountHint}>
               Dostępne: {formatAmount(amountModalItem?.amount)} {getLabel(amountModalItem?.unit)}
             </Text>
             <TextInput
+              accessibilityLabel="Ilość do użycia"
               style={styles.amountInput}
               keyboardType="decimal-pad"
               value={amountModalValue}
               onChangeText={setAmountModalValue}
               placeholder="np. 1"
+              placeholderTextColor="#98A2A3"
             />
-            <View style={styles.dateActions}>
-              <Pressable
-                style={[styles.modalActionBtn, styles.modalCancelBtn]}
-                onPress={() => setAmountModalVisible(false)}
-              >
+            <View style={styles.modalActions}>
+              <Pressable style={[styles.modalActionButton, styles.modalCancelButton]} onPress={closeAmountModal}>
                 <Text style={styles.modalCancelText}>Anuluj</Text>
               </Pressable>
               <Pressable
-                style={[styles.modalActionBtn, styles.modalConfirmBtn]}
+                style={[styles.modalActionButton, styles.modalConfirmButton]}
                 onPress={() => {
-                  setAmountModalVisible(false);
                   const current = amountModalItem;
                   const value = amountModalValue;
+                  closeAmountModal();
                   setTimeout(() => {
                     consumeItem(current, value);
                   }, 50);
-                  setAmountModalItem(null);
                 }}
               >
                 <Text style={styles.modalConfirmText}>Potwierdź</Text>
               </Pressable>
             </View>
-          </View>
+          </LinearGradient>
         </View>
       </Modal>
     </LinearGradient>
@@ -428,136 +579,310 @@ export default function FridgeScreen() {
 
 const styles = StyleSheet.create({
   background: { flex: 1 },
-  container: { flex: 1, paddingTop: 52, paddingHorizontal: 20 },
+  safeArea: { flex: 1 },
+  container: { flex: 1, paddingHorizontal: 20 },
+  glow: { position: "absolute", borderRadius: 999 },
+  glowTop: {
+    width: 260,
+    height: 260,
+    top: -80,
+    right: -80,
+    backgroundColor: "rgba(215,225,217,0.62)",
+  },
+  glowMiddle: {
+    width: 280,
+    height: 280,
+    top: 330,
+    left: -150,
+    backgroundColor: "rgba(249,224,174,0.28)",
+  },
+  glowBottom: {
+    width: 300,
+    height: 300,
+    bottom: -110,
+    right: -130,
+    backgroundColor: "rgba(189,214,211,0.42)",
+  },
   header: {
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 24,
-    gap: 12,
+    alignItems: "flex-start",
+    gap: 15,
+    paddingTop: 16,
+    paddingBottom: 22,
   },
   backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,250,0.76)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    shadowColor: "#173746",
+    shadowOpacity: 0.13,
+    shadowRadius: 13,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 4,
   },
-  backLabel: { fontSize: 20, color: "#4A3B1B" },
-  title: { fontSize: 24, fontWeight: "700", color: "#4A3B1B" },
+  buttonPressed: { transform: [{ scale: 0.97 }], opacity: 0.9 },
+  backLabel: { color: "#173746", fontSize: 40, lineHeight: 41, fontWeight: "300", marginTop: -2 },
+  headerCopy: { flex: 1, paddingTop: 1 },
+  eyebrow: {
+    color: "#7D9098",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "800",
+    letterSpacing: 1.4,
+  },
+  title: {
+    color: "#151917",
+    fontSize: 35,
+    lineHeight: 40,
+    fontWeight: "700",
+    marginTop: 2,
+    fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: undefined }),
+  },
+  headerSubtitle: { color: "#667579", fontSize: 15, lineHeight: 21, marginTop: 4 },
   warningBox: {
-    backgroundColor: "rgba(255,207,0,0.15)",
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 27,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+    padding: 21,
     marginBottom: 16,
+    shadowColor: "#7B652C",
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 4,
   },
-  warningTitle: { fontSize: 16, fontWeight: "700", color: "#6A4E00" },
-  warningSubtitle: { fontSize: 13, color: "#6A4E00", marginTop: 4 },
+  warningEyebrow: { color: "#9A6A14", fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
+  warningTitle: { color: "#272317", fontSize: 22, lineHeight: 27, fontWeight: "700", marginTop: 7 },
+  warningSubtitle: { color: "#776849", fontSize: 14, lineHeight: 20, marginTop: 7 },
   warningAction: {
-    marginTop: 10,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: "rgba(31,111,235,0.15)",
+    minHeight: 52,
+    marginTop: 17,
+    paddingHorizontal: 17,
+    borderRadius: 18,
+    backgroundColor: "#304B54",
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
   },
-  warningActionText: { color: "#1F6FEB", fontWeight: "700" },
+  warningActionText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
+  warningActionArrow: { position: "absolute", right: 17, color: "#D9E5E5", fontSize: 28, lineHeight: 29 },
   errorBanner: {
-    backgroundColor: "rgba(214,69,80,0.12)",
-    borderRadius: 12,
-    padding: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    backgroundColor: "rgba(255,247,244,0.90)",
+    borderWidth: 1,
+    borderColor: "rgba(164,73,62,0.12)",
+    borderRadius: 18,
+    padding: 14,
     marginBottom: 16,
   },
-  errorText: { color: "#B71C1C", fontWeight: "600", marginBottom: 6 },
-  retryText: { color: "#1F6FEB", fontWeight: "700" },
-  loaderBox: { flex: 1, alignItems: "center", justifyContent: "center" },
-  listContent: { paddingBottom: 32, gap: 14 },
-  emptyBox: { alignItems: "center", paddingVertical: 60, gap: 8 },
-  emptyTitle: { fontSize: 18, fontWeight: "700", color: "#3F3116" },
-  emptySubtitle: { fontSize: 13, color: "#6F5833" },
+  errorIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#A4493E",
+  },
+  errorIconText: { color: "#FFFFFF", fontWeight: "800" },
+  errorCopy: { flex: 1 },
+  errorText: { color: "#913D34", fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  retryText: { color: "#294B57", fontWeight: "800", marginTop: 4 },
+  loaderBox: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12 },
+  loaderText: { color: "#667579", fontSize: 14 },
+  listContent: { paddingBottom: 34, gap: 14 },
+  listHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingBottom: 2,
+  },
+  listHintDot: { color: "#7D9098", fontSize: 18, lineHeight: 18 },
+  listHintText: { color: "#78888C", fontSize: 12, lineHeight: 17 },
+  listSpacer: { flex: 1 },
+  emptyBox: {
+    alignItems: "center",
+    paddingHorizontal: 26,
+    paddingVertical: 42,
+    borderRadius: 28,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+    shadowColor: "#173746",
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 9 },
+    elevation: 4,
+  },
+  emptyIconBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(229,243,244,0.86)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+  },
+  emptyTitle: { color: "#172222", fontSize: 22, fontWeight: "700", marginTop: 17 },
+  emptySubtitle: { maxWidth: 280, color: "#667579", fontSize: 14, lineHeight: 21, textAlign: "center", marginTop: 7 },
+  cardShell: {
+    width: "100%",
+    borderRadius: 25,
+    shadowColor: "#173746",
+    shadowOpacity: 0.13,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  cardPressed: { transform: [{ scale: 0.985 }], opacity: 0.92 },
   card: {
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderRadius: 16,
-    padding: 18,
-    shadowColor: "#000",
-    shadowOpacity: 0.07,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    gap: 4,
+    minHeight: 126,
+    borderRadius: 25,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    overflow: "hidden",
   },
-  cardWarning: {
-    backgroundColor: "rgba(255, 200, 0, 0.18)",
-    borderColor: "rgba(255, 200, 0, 0.4)",
-    borderWidth: 1,
+  productIconBadge: {
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(229,243,244,0.84)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
   },
-  cardExpired: {
-    backgroundColor: "rgba(255, 82, 82, 0.18)",
-    borderColor: "rgba(255, 82, 82, 0.45)",
-    borderWidth: 1,
+  productCopy: { flex: 1, minWidth: 0 },
+  productHeadingRow: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
+  productName: { flex: 1, color: "#151917", fontSize: 18, lineHeight: 23, fontWeight: "700" },
+  amountText: { color: "#536A71", fontSize: 15, lineHeight: 21, marginTop: 4 },
+  expiryRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 9 },
+  expiryDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#8AA19F" },
+  expiryDotWarning: { backgroundColor: "#C48619" },
+  expiryDotExpired: { backgroundColor: "#A4493E" },
+  expiryText: { flex: 1, color: "#718287", fontSize: 12, lineHeight: 17 },
+  expiryTextExpired: { color: "#93483E", fontWeight: "600" },
+  statusBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    backgroundColor: "rgba(196,134,25,0.12)",
   },
-  productName: { fontSize: 16, fontWeight: "700", color: "#3F3116" },
-  metaText: { fontSize: 13, color: "#6F5833" },
+  statusBadgeExpired: { backgroundColor: "rgba(164,73,62,0.11)" },
+  statusBadgeText: { color: "#A66908", fontSize: 8, lineHeight: 10, fontWeight: "900", letterSpacing: 0.5 },
+  statusBadgeTextExpired: { color: "#A4493E" },
+  cardMore: { alignSelf: "flex-start", color: "#A2B0B2", fontSize: 13, letterSpacing: 1, marginTop: 2 },
   contextOverlay: {
     flex: 1,
     alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
+    justifyContent: "flex-end",
+    paddingHorizontal: 20,
+    paddingBottom: 24,
     position: "relative",
   },
-  contextBackdrop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
+  contextBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(19,35,39,0.34)" },
   contextCard: {
     width: "100%",
-    backgroundColor: "#fff",
-    borderRadius: 20,
+    maxWidth: 430,
+    borderRadius: 30,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
     padding: 20,
-    gap: 8,
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    gap: 10,
+    elevation: 10,
+    shadowColor: "#173746",
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
   },
-  contextTitle: { fontSize: 16, fontWeight: "700", color: "#3F3116", marginBottom: 4 },
-  contextAction: {
-    paddingVertical: 12,
+  modalHandle: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "rgba(48,75,84,0.18)", marginBottom: 4 },
+  modalProductRow: { flexDirection: "row", alignItems: "center", gap: 13, marginBottom: 3 },
+  modalIconBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
     alignItems: "center",
-    borderRadius: 12,
-    backgroundColor: "rgba(31,111,235,0.08)",
+    justifyContent: "center",
+    backgroundColor: "rgba(229,243,244,0.86)",
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
   },
-  contextActionText: { fontWeight: "700", color: "#1F6FEB" },
-  contextCancel: { backgroundColor: "rgba(0,0,0,0.05)", marginTop: 4 },
-  contextCancelText: { color: "#333" },
+  modalProductCopy: { flex: 1 },
+  modalEyebrow: { color: "#7D9098", fontSize: 10, lineHeight: 14, fontWeight: "800", letterSpacing: 1.2 },
+  contextTitle: { color: "#172222", fontSize: 20, lineHeight: 25, fontWeight: "700", marginTop: 2 },
+  contextSubtitle: { color: "#708086", fontSize: 13, marginBottom: 3 },
+  contextAction: {
+    minHeight: 54,
+    paddingHorizontal: 17,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 18,
+  },
+  contextActionPrimary: { backgroundColor: "#304B54" },
+  contextActionPrimaryText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
+  contextActionPrimaryArrow: { position: "absolute", right: 17, color: "#D9E5E5", fontSize: 28, lineHeight: 29 },
+  contextActionDanger: { backgroundColor: "rgba(164,73,62,0.09)" },
+  contextActionDangerText: { color: "#A4493E", fontSize: 15, fontWeight: "700" },
+  contextCancel: { minHeight: 42, alignItems: "center", justifyContent: "center" },
+  contextCancelText: { color: "#68777A", fontSize: 14, fontWeight: "600" },
   amountModal: {
     width: "100%",
-    maxWidth: 360,
-    backgroundColor: "#fff",
-    borderRadius: 20,
+    maxWidth: 430,
+    borderRadius: 30,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
     padding: 20,
-    gap: 12,
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    gap: 10,
+    elevation: 10,
+    shadowColor: "#173746",
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
   },
-  amountHint: { color: "#6F5833", fontSize: 13 },
+  amountTitle: { color: "#172222", fontSize: 26, lineHeight: 31, fontWeight: "700" },
+  amountHint: { color: "#667579", fontSize: 14, lineHeight: 20 },
   amountInput: {
-    backgroundColor: "rgba(255,255,255,0.92)",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(31,111,235,0.25)",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    minHeight: 56,
+    backgroundColor: "rgba(238,244,242,0.80)",
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.96)",
+    paddingHorizontal: 17,
+    paddingVertical: 14,
+    color: "#162326",
     fontSize: 16,
   },
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  modalActionButton: { flex: 1, minHeight: 52, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  modalCancelButton: { backgroundColor: "rgba(48,75,84,0.07)" },
+  modalConfirmButton: { backgroundColor: "#304B54" },
+  modalCancelText: { color: "#596B70", fontSize: 14, fontWeight: "700" },
+  modalConfirmText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+});
+
+const glyphStyles = StyleSheet.create({
+  wrap: { width: 34, height: 39, alignItems: "center" },
+  lid: { width: 24, height: 4, borderRadius: 2, backgroundColor: "#173746", marginBottom: 2 },
+  jar: {
+    width: 29,
+    height: 31,
+    borderWidth: 2.2,
+    borderColor: "#173746",
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  label: { width: 15, height: 8, borderRadius: 3, backgroundColor: "rgba(23,55,70,0.18)" },
 });
