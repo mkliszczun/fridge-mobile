@@ -191,9 +191,9 @@ export default function HomeScreen() {
             <MenuCard
               eyebrow="Przepisy"
               title="Moje przepisy"
-              subtitle="Wkrótce"
+              subtitle="Przeglądaj i twórz przepisy"
               icon="recipe"
-              disabled
+              onPress={() => router.push("/recipes")}
             />
           </View>
         </ScrollView>
