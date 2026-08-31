@@ -8,6 +8,9 @@ import {
   Pressable,
   Modal,
   Alert,
+  ActionSheetIOS,
+  Platform,
+  TextInput,
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
@@ -61,6 +64,9 @@ export default function FridgeScreen() {
   const [error, setError] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [contextVisible, setContextVisible] = useState(false);
+  const [amountModalVisible, setAmountModalVisible] = useState(false);
+  const [amountModalValue, setAmountModalValue] = useState("1");
+  const [amountModalItem, setAmountModalItem] = useState(null);
 
   const headers = useMemo(
     () => ({
@@ -103,36 +109,174 @@ export default function FridgeScreen() {
     loadItems();
   }, [loadItems]);
 
-  const openContextMenu = useCallback((item) => {
-    setSelectedItem(item);
-    setContextVisible(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-  }, []);
+  const discardItem = useCallback(
+    async (item) => {
+      if (!item) return;
+      const itemId = item?.id || item?.itemId || item?.fridgeItemId;
+      if (!itemId) {
+        Alert.alert("Błąd", "Nie udało się zidentyfikować produktu do wyrzucenia.");
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/fridge-items/${itemId}/discard`, {
+          method: "POST",
+          headers,
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          const message = payload?.message || `HTTP ${res.status}`;
+          throw new Error(message);
+        }
+        Alert.alert("Wyrzucono", payload?.message || "Produkt został oznaczony jako wyrzucony.");
+        await loadItems();
+      } catch (err) {
+        Alert.alert("Błąd", err.message || "Nie udało się wyrzucić produktu.");
+      }
+    },
+    [headers, loadItems]
+  );
+
+  const consumeItem = useCallback(
+    async (item, value) => {
+      if (!item) return;
+      const itemId = item?.id || item?.itemId || item?.fridgeItemId;
+      if (!itemId) {
+        Alert.alert("Błąd", "Nie udało się zidentyfikować produktu.");
+        return;
+      }
+      const amount = Number(String(value).replace(",", "."));
+      if (!amount || !Number.isFinite(amount) || amount <= 0) {
+        Alert.alert("Błędna ilość", "Podaj poprawną dodatnią wartość.");
+        return;
+      }
+      const available = Number(item?.amount) || 0;
+      if (amount > available) {
+        Alert.alert("Błędna ilość", `Dostępna ilość to ${formatAmount(available)}.`);
+        return;
+      }
+
+      try {
+        const consumeAll = amount === available;
+        const endpoint = consumeAll
+          ? `${API_BASE_URL}/api/fridge-items/${itemId}/consume`
+          : `${API_BASE_URL}/api/fridge-items/${itemId}/use`;
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          ...(!consumeAll ? { body: JSON.stringify({ amountUsed: amount }) } : {}),
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          const message = payload?.message || `HTTP ${res.status}`;
+          throw new Error(message);
+        }
+
+        Alert.alert("Sukces", payload?.message || "Produkt został wykorzystany.");
+        await loadItems();
+      } catch (err) {
+        Alert.alert("Błąd", err.message || "Nie udało się zużyć produktu.");
+      }
+    },
+    [headers, loadItems]
+  );
+
+  const promptUseItem = useCallback(
+    (item) => {
+      if (!item) return;
+      const available = Number(item?.amount) || 0;
+      const defaultValue = available > 0 ? String(available) : "1";
+
+      if (Platform.OS === "ios") {
+        Alert.prompt(
+          "Użyj produktu",
+          "Podaj ilość do użycia",
+          [
+            { text: "Anuluj", style: "cancel" },
+            {
+              text: "Potwierdź",
+              onPress: (value) => consumeItem(item, value ?? defaultValue),
+            },
+          ],
+          "plain-text",
+          defaultValue,
+          "decimal-pad"
+        );
+      } else {
+        setAmountModalItem(item);
+        setAmountModalValue(defaultValue);
+        setAmountModalVisible(true);
+      }
+    },
+    [consumeItem]
+  );
 
   const closeContextMenu = useCallback(() => {
     setContextVisible(false);
     setSelectedItem(null);
   }, []);
 
-  const handleAction = useCallback((action) => {
-    closeContextMenu();
-    switch (action) {
-      case "use":
-        Alert.alert("Użyj", "Funkcja do zaimplementowania");
-        break;
-      case "throw":
-        Alert.alert("Wyrzuć", "Funkcja do zaimplementowania");
-        break;
-      case "amount":
-        Alert.alert("Zmień ilość", "Funkcja do zaimplementowania");
-        break;
-      case "date":
-        Alert.alert("Zmień datę przydatności", "Funkcja do zaimplementowania");
-        break;
-      default:
-        break;
-    }
-  }, [closeContextMenu]);
+  const handleAction = useCallback(
+    (action, itemOverride) => {
+      const current = itemOverride || selectedItem;
+      if (!current) return;
+
+      if (Platform.OS !== "ios") closeContextMenu();
+      switch (action) {
+        case "use":
+          promptUseItem(current);
+          break;
+        case "throw":
+          Alert.alert("Wyrzuć produkt", "Czy na pewno chcesz wyrzucić ten produkt?", [
+            { text: "Anuluj", style: "cancel" },
+            {
+              text: "Wyrzuć",
+              style: "destructive",
+              onPress: () => discardItem(current),
+            },
+          ]);
+          break;
+        default:
+          break;
+      }
+      if (Platform.OS === "ios") setSelectedItem(null);
+    },
+    [closeContextMenu, discardItem, promptUseItem, selectedItem]
+  );
+
+  const openContextMenu = useCallback(
+    (item) => {
+      setSelectedItem(item);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      if (Platform.OS === "ios") {
+        const options = ["Użyj", "Wyrzuć", "Anuluj"];
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            title:
+              item?.customName || item?.name || item?.product?.name || "Produkt",
+            options,
+            cancelButtonIndex: 2,
+            destructiveButtonIndex: 1,
+            userInterfaceStyle: "light",
+          },
+          (buttonIndex) => {
+            const actions = ["use", "throw"];
+            if (buttonIndex >= 0 && buttonIndex < actions.length) {
+              handleAction(actions[buttonIndex], item);
+            } else {
+              setSelectedItem(null);
+            }
+          }
+        );
+        return;
+      }
+
+      setContextVisible(true);
+    },
+    [handleAction]
+  );
 
   return (
     <LinearGradient
@@ -219,21 +363,62 @@ export default function FridgeScreen() {
             <Text style={styles.contextTitle}>
               {selectedItem?.customName || selectedItem?.name || selectedItem?.product?.name || "Produkt"}
             </Text>
-            <Pressable style={styles.contextAction} onPress={() => handleAction("use")}>
+            <Pressable style={styles.contextAction} onPress={() => handleAction("use", selectedItem)}>
               <Text style={styles.contextActionText}>Użyj</Text>
             </Pressable>
-            <Pressable style={styles.contextAction} onPress={() => handleAction("throw")}>
+            <Pressable style={styles.contextAction} onPress={() => handleAction("throw", selectedItem)}>
               <Text style={styles.contextActionText}>Wyrzuć</Text>
-            </Pressable>
-            <Pressable style={styles.contextAction} onPress={() => handleAction("amount")}>
-              <Text style={styles.contextActionText}>Zmień ilość</Text>
-            </Pressable>
-            <Pressable style={styles.contextAction} onPress={() => handleAction("date")}>
-              <Text style={styles.contextActionText}>Zmień datę przydatności</Text>
             </Pressable>
             <Pressable style={[styles.contextAction, styles.contextCancel]} onPress={closeContextMenu}>
               <Text style={[styles.contextActionText, styles.contextCancelText]}>Anuluj</Text>
             </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal transparent visible={amountModalVisible} animationType="fade" onRequestClose={() => setAmountModalVisible(false)}>
+        <View style={styles.contextOverlay}>
+          <Pressable
+            style={styles.contextBackdrop}
+            onPress={() => {
+              setAmountModalVisible(false);
+              setAmountModalItem(null);
+            }}
+          />
+          <View style={styles.amountModal}>
+            <Text style={styles.contextTitle}>Podaj ilość do użycia</Text>
+            <Text style={styles.amountHint}>
+              Dostępne: {formatAmount(amountModalItem?.amount)} {getLabel(amountModalItem?.unit)}
+            </Text>
+            <TextInput
+              style={styles.amountInput}
+              keyboardType="decimal-pad"
+              value={amountModalValue}
+              onChangeText={setAmountModalValue}
+              placeholder="np. 1"
+            />
+            <View style={styles.dateActions}>
+              <Pressable
+                style={[styles.modalActionBtn, styles.modalCancelBtn]}
+                onPress={() => setAmountModalVisible(false)}
+              >
+                <Text style={styles.modalCancelText}>Anuluj</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalActionBtn, styles.modalConfirmBtn]}
+                onPress={() => {
+                  setAmountModalVisible(false);
+                  const current = amountModalItem;
+                  const value = amountModalValue;
+                  setTimeout(() => {
+                    consumeItem(current, value);
+                  }, 50);
+                  setAmountModalItem(null);
+                }}
+              >
+                <Text style={styles.modalConfirmText}>Potwierdź</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -352,4 +537,27 @@ const styles = StyleSheet.create({
   contextActionText: { fontWeight: "700", color: "#1F6FEB" },
   contextCancel: { backgroundColor: "rgba(0,0,0,0.05)", marginTop: 4 },
   contextCancelText: { color: "#333" },
+  amountModal: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    gap: 12,
+    elevation: 6,
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  amountHint: { color: "#6F5833", fontSize: 13 },
+  amountInput: {
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(31,111,235,0.25)",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+  },
 });
