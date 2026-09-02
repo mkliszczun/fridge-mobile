@@ -183,10 +183,10 @@ export default function HomeScreen() {
             />
             <MenuCard
               eyebrow="Planowanie"
-              title="Moje obiady"
-              subtitle="Wkrótce"
+              title="Moje posiłki"
+              subtitle="Zaplanuj najbliższe dni"
               icon="meal"
-              disabled
+              onPress={() => router.push("/meals")}
             />
             <MenuCard
               eyebrow="Przepisy"
@@ -194,6 +194,13 @@ export default function HomeScreen() {
               subtitle="Przeglądaj i twórz przepisy"
               icon="recipe"
               onPress={() => router.push("/recipes")}
+            />
+            <MenuCard
+              eyebrow="Zakupy"
+              title="Lista zakupów"
+              subtitle="Utwórz z zaplanowanych posiłków"
+              icon="shopping"
+              onPress={() => router.push("/shopping-list")}
             />
           </View>
         </ScrollView>

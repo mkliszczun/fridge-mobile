@@ -46,12 +46,26 @@ function RecipeIcon() {
   );
 }
 
+function ShoppingIcon() {
+  return (
+    <View style={iconStyles.shoppingWrap}>
+      <View style={iconStyles.shoppingHandle} />
+      <View style={iconStyles.shoppingBag}>
+        <View style={iconStyles.shoppingLine} />
+        <View style={iconStyles.shoppingLine} />
+        <View style={iconStyles.shoppingLine} />
+      </View>
+    </View>
+  );
+}
+
 function FeatureIcon({ type }) {
   return (
     <View style={styles.iconBadge}>
       {type === "pantry" ? <PantryIcon /> : null}
       {type === "meal" ? <MealIcon /> : null}
       {type === "recipe" ? <RecipeIcon /> : null}
+      {type === "shopping" ? <ShoppingIcon /> : null}
     </View>
   );
 }
@@ -241,4 +255,27 @@ const iconStyles = StyleSheet.create({
   pageRight: { borderTopRightRadius: 6, borderBottomRightRadius: 4, borderLeftWidth: 1 },
   bookLine: { width: "100%", height: 1.5, borderRadius: 1, backgroundColor: INK },
   bookSpine: { position: "absolute", top: 2, bottom: -2, left: 20, width: 2, backgroundColor: INK },
+  shoppingWrap: { width: 39, height: 42, alignItems: "center", justifyContent: "flex-end" },
+  shoppingHandle: {
+    position: "absolute",
+    top: 0,
+    width: 19,
+    height: 14,
+    borderWidth: 2.3,
+    borderBottomWidth: 0,
+    borderColor: INK,
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+  },
+  shoppingBag: {
+    width: 37,
+    height: 33,
+    borderWidth: 2.3,
+    borderColor: INK,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    gap: 5,
+  },
+  shoppingLine: { width: "100%", height: 1.8, borderRadius: 1, backgroundColor: INK },
 });
