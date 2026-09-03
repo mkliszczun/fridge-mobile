@@ -136,6 +136,10 @@ export default function PlanMealsScreen() {
   );
 
   const hasSavedSlots = slots.some((slot) => slot.saved);
+  const hasUnsavedSlots = slots.some((slot) => !slot.saved);
+  const hasPendingReservations = slots.some((slot) => (
+    slot.saved && slot.plannedMealId && !slot.reservationsProcessed
+  ));
   const filledCount = slots.filter((slot) => slot.recipeId).length;
 
   const changeStartDate = (difference) => {
@@ -282,16 +286,22 @@ export default function PlanMealsScreen() {
     }
 
     const pendingSlots = slots.filter((slot) => !slot.saved);
-    if (!pendingSlots.length) {
+    const retryReservationIds = slots
+      .filter((slot) => slot.saved && slot.plannedMealId && !slot.reservationsProcessed)
+      .map((slot) => String(slot.plannedMealId));
+    if (!pendingSlots.length && !retryReservationIds.length) {
       router.back();
       return;
     }
 
     setSaving(true);
     setSaveError(null);
-    const savedDates = [];
-    try {
-      for (const slot of pendingSlots) {
+    const createdMeals = [];
+    let saveFailure = null;
+    let reservationFailure = null;
+
+    for (const slot of pendingSlots) {
+      try {
         const response = await fetch(
           `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals`,
           {
@@ -308,25 +318,82 @@ export default function PlanMealsScreen() {
         if (!response.ok) {
           throw new Error(payload?.message || `HTTP ${response.status}`);
         }
-        savedDates.push(slot.plannedDate);
+        if (!payload?.id) {
+          throw new Error("Serwer nie zwrócił identyfikatora zaplanowanego posiłku.");
+        }
+        createdMeals.push({
+          plannedDate: slot.plannedDate,
+          plannedMealId: String(payload.id),
+        });
+      } catch (err) {
+        saveFailure = err;
+        break;
       }
-
-      setSlots((current) => current.map((slot) => (
-        savedDates.includes(slot.plannedDate) ? { ...slot, saved: true } : slot
-      )));
-      router.back();
-    } catch (err) {
-      setSlots((current) => current.map((slot) => (
-        savedDates.includes(slot.plannedDate) ? { ...slot, saved: true } : slot
-      )));
-      setSaveError(
-        savedDates.length
-          ? `Zapisano ${savedDates.length} z ${pendingSlots.length} pozostałych dni. ${err.message || "Spróbuj zapisać resztę ponownie."}`
-          : (err.message || "Nie udało się zapisać planu posiłków")
-      );
-    } finally {
-      setSaving(false);
     }
+
+    const reservationIds = [
+      ...new Set([
+        ...retryReservationIds,
+        ...createdMeals.map((meal) => meal.plannedMealId),
+      ]),
+    ];
+
+    if (reservationIds.length) {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals/reserve`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ plannedMealIds: reservationIds }),
+          }
+        );
+        const payload = await readPayload(response);
+        if (!response.ok) {
+          throw new Error(payload?.message || `HTTP ${response.status}`);
+        }
+      } catch (err) {
+        reservationFailure = err;
+      }
+    }
+
+    const createdByDate = new Map(
+      createdMeals.map((meal) => [meal.plannedDate, meal.plannedMealId])
+    );
+    const processedReservationIds = reservationFailure
+      ? new Set()
+      : new Set(reservationIds);
+
+    setSlots((current) => current.map((slot) => {
+      const createdMealId = createdByDate.get(slot.plannedDate);
+      const nextSlot = createdMealId
+        ? { ...slot, saved: true, plannedMealId: createdMealId }
+        : slot;
+      return nextSlot.plannedMealId && processedReservationIds.has(String(nextSlot.plannedMealId))
+        ? { ...nextSlot, reservationsProcessed: true }
+        : nextSlot;
+    }));
+
+    if (!saveFailure && !reservationFailure) {
+      router.back();
+    } else {
+      const messages = [];
+      if (saveFailure) {
+        messages.push(
+          createdMeals.length
+            ? `Zapisano ${createdMeals.length} z ${pendingSlots.length} pozostałych dni. ${saveFailure.message || "Spróbuj zapisać resztę ponownie."}`
+            : (saveFailure.message || "Nie udało się zapisać planu posiłków.")
+        );
+      }
+      if (reservationFailure) {
+        messages.push(
+          `Posiłki zapisano, ale nie udało się zarezerwować produktów. ${reservationFailure.message || "Spróbuj ponownie."}`
+        );
+      }
+      setSaveError(messages.join(" "));
+    }
+
+    setSaving(false);
   };
 
   const closeAi = () => {
@@ -577,7 +644,11 @@ export default function PlanMealsScreen() {
                 ) : (
                   <>
                     <Text style={styles.submitText}>
-                      {hasSavedSlots ? "Zapisz pozostałe dni" : "Zapisz plan"}
+                      {hasPendingReservations && !hasUnsavedSlots
+                        ? "Ponów rezerwację"
+                        : hasSavedSlots
+                          ? "Zapisz pozostałe dni"
+                          : "Zapisz plan"}
                     </Text>
                     <Text style={styles.submitArrow}>›</Text>
                   </>

@@ -9,6 +9,7 @@ import {
   Modal,
   Alert,
   ActionSheetIOS,
+  KeyboardAvoidingView,
   Platform,
   TextInput,
 } from "react-native";
@@ -24,6 +25,7 @@ const CARD_GRADIENTS = {
   normal: ["rgba(255,255,251,0.92)", "rgba(246,247,240,0.80)"],
   warning: ["rgba(255,252,239,0.96)", "rgba(255,241,204,0.86)"],
   expired: ["rgba(255,247,244,0.96)", "rgba(249,226,220,0.86)"],
+  reserved: ["rgba(239,241,239,0.94)", "rgba(224,228,225,0.88)"],
 };
 
 const formatAmount = (value) => {
@@ -31,6 +33,28 @@ const formatAmount = (value) => {
   const num = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(num)) return String(value);
   return num % 1 === 0 ? String(num) : num.toFixed(2);
+};
+
+const numericAmount = (value) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const getReservationAmounts = (item) => {
+  const total = Math.max(0, numericAmount(item?.amount));
+  const reserved = Math.max(0, numericAmount(item?.reservedAmount));
+  const responseAvailable = Number(item?.availableAmount);
+  const available = item?.availableAmount != null && Number.isFinite(responseAvailable)
+    ? Math.max(0, responseAvailable)
+    : Math.max(0, total - reserved);
+
+  return {
+    total,
+    reserved,
+    available,
+    fullyReserved: reserved > 0 && available <= 0,
+    partiallyReserved: reserved > 0 && available > 0,
+  };
 };
 
 const getLabel = (value) => {
@@ -54,6 +78,19 @@ const getLocalDate = (value) => {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
   if (!match) return null;
   return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+};
+
+const isValidIsoDate = (value) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value).trim());
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year
+    && date.getMonth() === month - 1
+    && date.getDate() === day;
 };
 
 const formatDate = (value) => {
@@ -114,6 +151,11 @@ export default function FridgeScreen() {
   const [amountModalVisible, setAmountModalVisible] = useState(false);
   const [amountModalValue, setAmountModalValue] = useState("1");
   const [amountModalItem, setAmountModalItem] = useState(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editModalItem, setEditModalItem] = useState(null);
+  const [editAmountValue, setEditAmountValue] = useState("");
+  const [editDateValue, setEditDateValue] = useState("");
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const headers = useMemo(
     () => ({
@@ -122,6 +164,17 @@ export default function FridgeScreen() {
     }),
     [token]
   );
+
+  const sortedItems = useMemo(() => (
+    items
+      .map((item, index) => ({ item, index }))
+      .sort((left, right) => {
+        const reservationOrder = Number(getReservationAmounts(left.item).fullyReserved)
+          - Number(getReservationAmounts(right.item).fullyReserved);
+        return reservationOrder || left.index - right.index;
+      })
+      .map(({ item }) => item)
+  ), [items]);
 
   const loadItems = useCallback(async (showRefreshing = false) => {
     if (!activeFridge) {
@@ -197,14 +250,14 @@ export default function FridgeScreen() {
         Alert.alert("Błędna ilość", "Podaj poprawną dodatnią wartość.");
         return;
       }
-      const available = Number(item?.amount) || 0;
+      const { total, available } = getReservationAmounts(item);
       if (amount > available) {
         Alert.alert("Błędna ilość", `Dostępna ilość to ${formatAmount(available)}.`);
         return;
       }
 
       try {
-        const consumeAll = amount === available;
+        const consumeAll = available === total && amount === total;
         const endpoint = consumeAll
           ? `${API_BASE_URL}/api/fridge-items/${itemId}/consume`
           : `${API_BASE_URL}/api/fridge-items/${itemId}/use`;
@@ -232,7 +285,14 @@ export default function FridgeScreen() {
   const promptUseItem = useCallback(
     (item) => {
       if (!item) return;
-      const available = Number(item?.amount) || 0;
+      const { available } = getReservationAmounts(item);
+      if (available <= 0) {
+        Alert.alert(
+          "Produkt jest zarezerwowany",
+          "Cała dostępna ilość została zarezerwowana dla zaplanowanych posiłków."
+        );
+        return;
+      }
       const defaultValue = available > 0 ? String(available) : "1";
 
       if (Platform.OS === "ios") {
@@ -269,6 +329,83 @@ export default function FridgeScreen() {
     setAmountModalItem(null);
   }, []);
 
+  const openEditModal = useCallback((item) => {
+    if (!item) return;
+    setEditModalItem(item);
+    setEditAmountValue(formatAmount(item?.amount));
+    setEditDateValue(String(item?.bestBeforeDate || item?.effectiveExpireAt || ""));
+    setEditModalVisible(true);
+  }, []);
+
+  const closeEditModal = useCallback(() => {
+    if (editSubmitting) return;
+    setEditModalVisible(false);
+    setEditModalItem(null);
+  }, [editSubmitting]);
+
+  const saveItemChanges = useCallback(async () => {
+    const item = editModalItem;
+    const itemId = item?.id || item?.itemId || item?.fridgeItemId;
+    if (!itemId) {
+      Alert.alert("Błąd", "Nie udało się zidentyfikować produktu.");
+      return;
+    }
+
+    const amount = Number(String(editAmountValue).replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert("Błędna ilość", "Podaj poprawną dodatnią wartość.");
+      return;
+    }
+
+    const { reserved } = getReservationAmounts(item);
+    if (amount < reserved) {
+      Alert.alert(
+        "Ilość jest zbyt mała",
+        `Nie można ustawić mniej niż zarezerwowane ${formatAmount(reserved)} ${getLabel(item?.unit)}.`
+      );
+      return;
+    }
+
+    const bestBeforeDate = editDateValue.trim();
+    if (!isValidIsoDate(bestBeforeDate)) {
+      Alert.alert("Błędna data", "Wpisz datę w formacie RRRR-MM-DD, np. 2026-09-15.");
+      return;
+    }
+
+    setEditSubmitting(true);
+    try {
+      const amountResponse = await fetch(`${API_BASE_URL}/api/fridge-items/${itemId}/amount`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ amount }),
+      });
+      const amountPayload = await amountResponse.json().catch(() => null);
+      if (!amountResponse.ok) {
+        throw new Error(amountPayload?.message || `HTTP ${amountResponse.status}`);
+      }
+
+      const dateResponse = await fetch(`${API_BASE_URL}/api/fridge-items/${itemId}/best-before-date`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ bestBeforeDate }),
+      });
+      const datePayload = await dateResponse.json().catch(() => null);
+      if (!dateResponse.ok) {
+        throw new Error(datePayload?.message || `HTTP ${dateResponse.status}`);
+      }
+
+      setEditModalVisible(false);
+      setEditModalItem(null);
+      await loadItems();
+      Alert.alert("Zapisano", "Ilość i termin przydatności zostały zaktualizowane.");
+    } catch (err) {
+      await loadItems();
+      Alert.alert("Błąd", err.message || "Nie udało się zaktualizować produktu.");
+    } finally {
+      setEditSubmitting(false);
+    }
+  }, [editAmountValue, editDateValue, editModalItem, headers, loadItems]);
+
   const handleAction = useCallback(
     (action, itemOverride) => {
       const current = itemOverride || selectedItem;
@@ -278,6 +415,9 @@ export default function FridgeScreen() {
       switch (action) {
         case "use":
           promptUseItem(current);
+          break;
+        case "edit":
+          openEditModal(current);
           break;
         case "throw":
           Alert.alert("Wyrzuć produkt", "Czy na pewno chcesz wyrzucić ten produkt?", [
@@ -294,7 +434,7 @@ export default function FridgeScreen() {
       }
       if (Platform.OS === "ios") setSelectedItem(null);
     },
-    [closeContextMenu, discardItem, promptUseItem, selectedItem]
+    [closeContextMenu, discardItem, openEditModal, promptUseItem, selectedItem]
   );
 
   const openContextMenu = useCallback(
@@ -303,18 +443,20 @@ export default function FridgeScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
       if (Platform.OS === "ios") {
-        const options = ["Użyj", "Wyrzuć", "Anuluj"];
+        const { fullyReserved } = getReservationAmounts(item);
+        const options = ["Użyj", "Edytuj", "Wyrzuć", "Anuluj"];
         ActionSheetIOS.showActionSheetWithOptions(
           {
             title:
               item?.customName || item?.name || item?.product?.name || "Produkt",
             options,
-            cancelButtonIndex: 2,
-            destructiveButtonIndex: 1,
+            cancelButtonIndex: 3,
+            destructiveButtonIndex: 2,
+            ...(fullyReserved ? { disabledButtonIndices: [0] } : {}),
             userInterfaceStyle: "light",
           },
           (buttonIndex) => {
-            const actions = ["use", "throw"];
+            const actions = ["use", "edit", "throw"];
             if (buttonIndex >= 0 && buttonIndex < actions.length) {
               handleAction(actions[buttonIndex], item);
             } else {
@@ -406,7 +548,7 @@ export default function FridgeScreen() {
             </View>
           ) : activeFridge ? (
             <FlatList
-              data={items}
+              data={sortedItems}
               keyExtractor={(item, index) => String(item?.id ?? index)}
               contentContainerStyle={styles.listContent}
               showsVerticalScrollIndicator={false}
@@ -415,7 +557,7 @@ export default function FridgeScreen() {
               ListHeaderComponent={items.length ? (
                 <View style={styles.listHint}>
                   <Text style={styles.listHintDot}>•</Text>
-                  <Text style={styles.listHintText}>Przytrzymaj produkt, aby go użyć lub wyrzucić</Text>
+                  <Text style={styles.listHintText}>Dotknij produktu, aby wybrać działanie</Text>
                 </View>
               ) : null}
               ListEmptyComponent={() => (
@@ -435,50 +577,106 @@ export default function FridgeScreen() {
               renderItem={({ item }) => {
                 const expiryValue = getExpiryValue(item);
                 const status = dateStatus(expiryValue);
+                const reservation = getReservationAmounts(item);
                 const productName =
                   item?.customName || item?.name || item?.product?.name || item?.productName || "Bez nazwy";
                 return (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={productName}
-                    accessibilityHint="Przytrzymaj, aby wybrać akcję"
+                    accessibilityLabel={reservation.fullyReserved
+                      ? `${productName}, w całości zarezerwowany`
+                      : productName}
+                    accessibilityHint="Dotknij lub przytrzymaj, aby wybrać akcję"
+                    onPress={() => openContextMenu(item)}
                     onLongPress={() => openContextMenu(item)}
                     delayLongPress={700}
-                    style={({ pressed }) => [styles.cardShell, pressed && styles.cardPressed]}
+                    style={({ pressed }) => [
+                      styles.cardShell,
+                      reservation.fullyReserved && styles.cardShellReserved,
+                      pressed && styles.cardPressed,
+                    ]}
                   >
                     <LinearGradient
-                      colors={CARD_GRADIENTS[status]}
+                      colors={CARD_GRADIENTS[reservation.fullyReserved ? "reserved" : status]}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 1 }}
                       style={styles.card}
                     >
-                      <View style={styles.productIconBadge}>
+                      <View style={[
+                        styles.productIconBadge,
+                        reservation.fullyReserved && styles.productIconBadgeReserved,
+                      ]}>
                         <ProductGlyph />
                       </View>
                       <View style={styles.productCopy}>
                         <View style={styles.productHeadingRow}>
-                          <Text style={styles.productName} numberOfLines={2}>
+                          <Text
+                            style={[
+                              styles.productName,
+                              reservation.fullyReserved && styles.productNameReserved,
+                            ]}
+                            numberOfLines={2}
+                          >
                             {productName}
                           </Text>
-                          {status !== "normal" ? (
-                            <View style={[styles.statusBadge, status === "expired" && styles.statusBadgeExpired]}>
-                              <Text style={[styles.statusBadgeText, status === "expired" && styles.statusBadgeTextExpired]}>
-                                {status === "expired" ? "PO TERMINIE" : "WKRÓTCE"}
+                          {reservation.fullyReserved || status !== "normal" ? (
+                            <View style={[
+                              styles.statusBadge,
+                              status === "expired" && styles.statusBadgeExpired,
+                              reservation.fullyReserved && styles.statusBadgeReserved,
+                            ]}>
+                              <Text style={[
+                                styles.statusBadgeText,
+                                status === "expired" && styles.statusBadgeTextExpired,
+                                reservation.fullyReserved && styles.statusBadgeTextReserved,
+                              ]}>
+                                {reservation.fullyReserved
+                                  ? "ZAREZERWOWANE"
+                                  : status === "expired"
+                                    ? "PO TERMINIE"
+                                    : "WKRÓTCE"}
                               </Text>
                             </View>
                           ) : null}
                         </View>
-                        <Text style={styles.amountText}>
-                          {formatAmount(item?.amount)} {getLabel(item?.unit)}
-                        </Text>
+                        {reservation.partiallyReserved ? (
+                          <View style={styles.reservationAmounts}>
+                            <Text style={styles.availableAmountText}>
+                              Dostępne: {formatAmount(reservation.available)} {getLabel(item?.unit)}
+                            </Text>
+                            <Text style={styles.reservedAmountText}>
+                              Zarezerwowane: {formatAmount(reservation.reserved)} {getLabel(item?.unit)}
+                            </Text>
+                          </View>
+                        ) : reservation.fullyReserved ? (
+                          <Text style={styles.fullyReservedAmountText}>
+                            Zarezerwowano: {formatAmount(reservation.reserved)} {getLabel(item?.unit)}
+                          </Text>
+                        ) : (
+                          <Text style={styles.amountText}>
+                            {formatAmount(item?.amount)} {getLabel(item?.unit)}
+                          </Text>
+                        )}
                         <View style={styles.expiryRow}>
-                          <View style={[styles.expiryDot, status === "warning" && styles.expiryDotWarning, status === "expired" && styles.expiryDotExpired]} />
-                          <Text style={[styles.expiryText, status === "expired" && styles.expiryTextExpired]}>
+                          <View style={[
+                            styles.expiryDot,
+                            status === "warning" && styles.expiryDotWarning,
+                            status === "expired" && styles.expiryDotExpired,
+                            reservation.fullyReserved && styles.expiryDotReserved,
+                          ]} />
+                          <Text style={[
+                            styles.expiryText,
+                            status === "expired" && styles.expiryTextExpired,
+                            reservation.fullyReserved && styles.expiryTextReserved,
+                          ]}>
                             {formatDate(expiryValue)}
                           </Text>
                         </View>
                       </View>
-                      <Text style={styles.cardMore}>•••</Text>
+                      <Text style={[
+                        styles.cardMore,
+                        reservation.fullyReserved && styles.cardMoreReserved,
+                      ]}>•••</Text>
                     </LinearGradient>
                   </Pressable>
                 );
@@ -511,11 +709,23 @@ export default function FridgeScreen() {
             </View>
             <Text style={styles.contextSubtitle}>Co chcesz zrobić?</Text>
             <Pressable
-              style={({ pressed }) => [styles.contextAction, styles.contextActionPrimary, pressed && styles.buttonPressed]}
+              disabled={getReservationAmounts(selectedItem).fullyReserved}
+              style={({ pressed }) => [
+                styles.contextAction,
+                styles.contextActionPrimary,
+                getReservationAmounts(selectedItem).fullyReserved && styles.contextActionDisabled,
+                pressed && styles.buttonPressed,
+              ]}
               onPress={() => handleAction("use", selectedItem)}
             >
               <Text style={styles.contextActionPrimaryText}>Użyj produktu</Text>
               <Text style={styles.contextActionPrimaryArrow}>›</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.contextAction, styles.contextActionSecondary, pressed && styles.buttonPressed]}
+              onPress={() => handleAction("edit", selectedItem)}
+            >
+              <Text style={styles.contextActionSecondaryText}>Edytuj</Text>
             </Pressable>
             <Pressable
               style={({ pressed }) => [styles.contextAction, styles.contextActionDanger, pressed && styles.buttonPressed]}
@@ -541,7 +751,7 @@ export default function FridgeScreen() {
             <Text style={styles.modalEyebrow}>UŻYJ PRODUKTU</Text>
             <Text style={styles.amountTitle}>Podaj ilość</Text>
             <Text style={styles.amountHint}>
-              Dostępne: {formatAmount(amountModalItem?.amount)} {getLabel(amountModalItem?.unit)}
+              Dostępne: {formatAmount(getReservationAmounts(amountModalItem).available)} {getLabel(amountModalItem?.unit)}
             </Text>
             <TextInput
               accessibilityLabel="Ilość do użycia"
@@ -572,6 +782,82 @@ export default function FridgeScreen() {
             </View>
           </LinearGradient>
         </View>
+      </Modal>
+
+      <Modal transparent visible={editModalVisible} animationType="fade" onRequestClose={closeEditModal}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalKeyboardView}
+        >
+          <View style={styles.contextOverlay}>
+            <Pressable style={styles.contextBackdrop} onPress={closeEditModal} />
+            <LinearGradient
+              colors={["rgba(255,255,251,0.98)", "rgba(239,244,240,0.96)"]}
+              style={styles.amountModal}
+            >
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalEyebrow}>EDYTUJ PRODUKT</Text>
+              <Text style={styles.amountTitle} numberOfLines={2}>
+                {editModalItem?.customName || editModalItem?.name || editModalItem?.product?.name || "Produkt"}
+              </Text>
+
+              <View style={styles.editField}>
+                <Text style={styles.editLabel}>Ilość ({getLabel(editModalItem?.unit)})</Text>
+                <TextInput
+                  accessibilityLabel="Nowa ilość produktu"
+                  style={styles.amountInput}
+                  keyboardType="decimal-pad"
+                  value={editAmountValue}
+                  onChangeText={setEditAmountValue}
+                  placeholder="np. 2"
+                  placeholderTextColor="#98A2A3"
+                  editable={!editSubmitting}
+                />
+                {getReservationAmounts(editModalItem).reserved > 0 ? (
+                  <Text style={styles.editHint}>
+                    Zarezerwowane: {formatAmount(getReservationAmounts(editModalItem).reserved)} {getLabel(editModalItem?.unit)}
+                  </Text>
+                ) : null}
+              </View>
+
+              <View style={styles.editField}>
+                <Text style={styles.editLabel}>Termin przydatności</Text>
+                <TextInput
+                  accessibilityLabel="Nowy termin przydatności"
+                  style={styles.amountInput}
+                  value={editDateValue}
+                  onChangeText={setEditDateValue}
+                  placeholder="RRRR-MM-DD"
+                  placeholderTextColor="#98A2A3"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!editSubmitting}
+                />
+              </View>
+
+              <View style={styles.modalActions}>
+                <Pressable
+                  disabled={editSubmitting}
+                  style={[styles.modalActionButton, styles.modalCancelButton, editSubmitting && styles.contextActionDisabled]}
+                  onPress={closeEditModal}
+                >
+                  <Text style={styles.modalCancelText}>Anuluj</Text>
+                </Pressable>
+                <Pressable
+                  disabled={editSubmitting}
+                  style={[styles.modalActionButton, styles.modalConfirmButton, editSubmitting && styles.contextActionDisabled]}
+                  onPress={saveItemChanges}
+                >
+                  {editSubmitting ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalConfirmText}>Zapisz</Text>
+                  )}
+                </Pressable>
+              </View>
+            </LinearGradient>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </LinearGradient>
   );
@@ -741,6 +1027,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 8 },
     elevation: 4,
   },
+  cardShellReserved: { shadowOpacity: 0.05, elevation: 1 },
   cardPressed: { transform: [{ scale: 0.985 }], opacity: 0.92 },
   card: {
     minHeight: 126,
@@ -763,16 +1050,24 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: "rgba(255,255,255,0.96)",
   },
+  productIconBadgeReserved: { backgroundColor: "rgba(210,216,212,0.78)", opacity: 0.62 },
   productCopy: { flex: 1, minWidth: 0 },
   productHeadingRow: { flexDirection: "row", alignItems: "flex-start", gap: 7 },
   productName: { flex: 1, color: "#151917", fontSize: 18, lineHeight: 23, fontWeight: "700" },
+  productNameReserved: { color: "#707976" },
   amountText: { color: "#536A71", fontSize: 15, lineHeight: 21, marginTop: 4 },
+  reservationAmounts: { marginTop: 5, gap: 2 },
+  availableAmountText: { color: "#365E59", fontSize: 13, lineHeight: 18, fontWeight: "800" },
+  reservedAmountText: { color: "#7D8987", fontSize: 12, lineHeight: 17, fontWeight: "600" },
+  fullyReservedAmountText: { color: "#818986", fontSize: 13, lineHeight: 18, fontWeight: "700", marginTop: 5 },
   expiryRow: { flexDirection: "row", alignItems: "center", gap: 7, marginTop: 9 },
   expiryDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#8AA19F" },
   expiryDotWarning: { backgroundColor: "#C48619" },
   expiryDotExpired: { backgroundColor: "#A4493E" },
+  expiryDotReserved: { backgroundColor: "#A1AAA7" },
   expiryText: { flex: 1, color: "#718287", fontSize: 12, lineHeight: 17 },
   expiryTextExpired: { color: "#93483E", fontWeight: "600" },
+  expiryTextReserved: { color: "#929A97", fontWeight: "500" },
   statusBadge: {
     borderRadius: 8,
     paddingHorizontal: 6,
@@ -780,9 +1075,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(196,134,25,0.12)",
   },
   statusBadgeExpired: { backgroundColor: "rgba(164,73,62,0.11)" },
+  statusBadgeReserved: { backgroundColor: "rgba(105,116,112,0.10)" },
   statusBadgeText: { color: "#A66908", fontSize: 8, lineHeight: 10, fontWeight: "900", letterSpacing: 0.5 },
   statusBadgeTextExpired: { color: "#A4493E" },
+  statusBadgeTextReserved: { color: "#737C79", fontSize: 7 },
   cardMore: { alignSelf: "flex-start", color: "#A2B0B2", fontSize: 13, letterSpacing: 1, marginTop: 2 },
+  cardMoreReserved: { color: "#B5BBB8" },
   contextOverlay: {
     flex: 1,
     alignItems: "center",
@@ -831,8 +1129,11 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   contextActionPrimary: { backgroundColor: "#304B54" },
+  contextActionDisabled: { opacity: 0.36 },
   contextActionPrimaryText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
   contextActionPrimaryArrow: { position: "absolute", right: 17, color: "#D9E5E5", fontSize: 28, lineHeight: 29 },
+  contextActionSecondary: { backgroundColor: "rgba(48,75,84,0.08)" },
+  contextActionSecondaryText: { color: "#304B54", fontSize: 15, fontWeight: "700" },
   contextActionDanger: { backgroundColor: "rgba(164,73,62,0.09)" },
   contextActionDangerText: { color: "#A4493E", fontSize: 15, fontWeight: "700" },
   contextCancel: { minHeight: 42, alignItems: "center", justifyContent: "center" },
@@ -864,6 +1165,10 @@ const styles = StyleSheet.create({
     color: "#162326",
     fontSize: 16,
   },
+  modalKeyboardView: { flex: 1 },
+  editField: { gap: 7 },
+  editLabel: { color: "#33484D", fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  editHint: { color: "#7D8987", fontSize: 12, lineHeight: 17 },
   modalActions: { flexDirection: "row", gap: 10, marginTop: 4 },
   modalActionButton: { flex: 1, minHeight: 52, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   modalCancelButton: { backgroundColor: "rgba(48,75,84,0.07)" },

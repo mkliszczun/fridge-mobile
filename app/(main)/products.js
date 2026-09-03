@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -50,6 +54,13 @@ const formatProductCount = (count) => {
   return `${count} produktów`;
 };
 
+const getErrorMessage = (payload, status, fallback) => {
+  if (payload?.message) return payload.message;
+  if (Array.isArray(payload?.details) && payload.details.length) return payload.details.join("\n");
+  if (payload?.error) return payload.error;
+  return fallback || `HTTP ${status}`;
+};
+
 function ProductGlyph() {
   return (
     <View style={glyphStyles.wrap}>
@@ -68,6 +79,10 @@ export default function ProductsCatalogScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [editProduct, setEditProduct] = useState(null);
+  const [shelfLifeValue, setShelfLifeValue] = useState("");
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [deletingProductId, setDeletingProductId] = useState(null);
 
   const headers = useMemo(
     () => ({
@@ -102,6 +117,102 @@ export default function ProductsCatalogScreen() {
   useEffect(() => {
     loadProducts();
   }, [loadProducts]);
+
+  const openEditProduct = useCallback((product) => {
+    setEditProduct(product);
+    setShelfLifeValue(
+      product?.shelfLifeAfterOpeningDays == null
+        ? ""
+        : String(product.shelfLifeAfterOpeningDays)
+    );
+  }, []);
+
+  const closeEditProduct = useCallback(() => {
+    if (savingProduct) return;
+    setEditProduct(null);
+    setShelfLifeValue("");
+  }, [savingProduct]);
+
+  const saveProduct = useCallback(async () => {
+    const productId = editProduct?.id;
+    if (!productId) {
+      Alert.alert("Błąd", "Nie udało się zidentyfikować produktu.");
+      return;
+    }
+
+    const trimmedValue = shelfLifeValue.trim();
+    const shelfLifeAfterOpeningDays = trimmedValue === "" ? null : Number(trimmedValue);
+    if (
+      shelfLifeAfterOpeningDays !== null
+      && (!Number.isInteger(shelfLifeAfterOpeningDays) || shelfLifeAfterOpeningDays < 0)
+    ) {
+      Alert.alert("Błędna wartość", "Podaj liczbę pełnych dni równą 0 lub większą.");
+      return;
+    }
+
+    setSavingProduct(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/products/${productId}/shelf-life-after-opening`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ shelfLifeAfterOpeningDays }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(getErrorMessage(payload, res.status, "Nie udało się zaktualizować produktu."));
+      }
+
+      setProducts((current) => current.map((product) => (
+        product?.id === productId ? { ...product, ...payload } : product
+      )));
+      setEditProduct(null);
+      setShelfLifeValue("");
+      Alert.alert("Zapisano", "Czas przydatności po otwarciu został zaktualizowany.");
+    } catch (err) {
+      Alert.alert("Błąd", err.message || "Nie udało się zaktualizować produktu.");
+    } finally {
+      setSavingProduct(false);
+    }
+  }, [editProduct, headers, shelfLifeValue]);
+
+  const deleteProduct = useCallback((product) => {
+    const productId = product?.id;
+    if (!productId) {
+      Alert.alert("Błąd", "Nie udało się zidentyfikować produktu.");
+      return;
+    }
+
+    Alert.alert(
+      "Usuń produkt",
+      `Czy na pewno chcesz usunąć „${product?.name || "Bez nazwy"}”?`,
+      [
+        { text: "Anuluj", style: "cancel" },
+        {
+          text: "Usuń",
+          style: "destructive",
+          onPress: async () => {
+            setDeletingProductId(productId);
+            try {
+              const res = await fetch(`${API_BASE_URL}/api/products/${productId}`, {
+                method: "DELETE",
+                headers,
+              });
+              const payload = await res.json().catch(() => null);
+              if (!res.ok) {
+                throw new Error(getErrorMessage(payload, res.status, "Nie udało się usunąć produktu."));
+              }
+
+              setProducts((current) => current.filter((item) => item?.id !== productId));
+            } catch (err) {
+              Alert.alert("Błąd", err.message || "Nie udało się usunąć produktu.");
+            } finally {
+              setDeletingProductId(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [headers]);
 
   return (
     <LinearGradient
@@ -203,6 +314,44 @@ export default function ProductsCatalogScreen() {
                       </View>
                       <Text style={styles.unitText}>{extractLabel(item?.defaultUnit)}</Text>
                     </View>
+                    <Text style={styles.shelfLifeText}>
+                      {item?.shelfLifeAfterOpeningDays == null
+                        ? "Po otwarciu: czas domyślny dla typu"
+                        : `Po otwarciu: ${item.shelfLifeAfterOpeningDays} dni`}
+                    </Text>
+                  </View>
+                  <View style={styles.cardActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edytuj ${item?.name || "produkt"}`}
+                      disabled={deletingProductId === item?.id}
+                      onPress={() => openEditProduct(item)}
+                      style={({ pressed }) => [
+                        styles.cardAction,
+                        styles.editAction,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      <Text style={styles.editActionText}>Edytuj</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Usuń ${item?.name || "produkt"}`}
+                      disabled={deletingProductId === item?.id}
+                      onPress={() => deleteProduct(item)}
+                      style={({ pressed }) => [
+                        styles.cardAction,
+                        styles.deleteAction,
+                        deletingProductId === item?.id && styles.actionDisabled,
+                        pressed && styles.buttonPressed,
+                      ]}
+                    >
+                      {deletingProductId === item?.id ? (
+                        <ActivityIndicator size="small" color="#A4493E" />
+                      ) : (
+                        <Text style={styles.deleteActionText}>Usuń</Text>
+                      )}
+                    </Pressable>
                   </View>
                 </LinearGradient>
               )}
@@ -210,6 +359,63 @@ export default function ProductsCatalogScreen() {
           )}
         </View>
       </SafeAreaView>
+
+      <Modal transparent visible={Boolean(editProduct)} animationType="fade" onRequestClose={closeEditProduct}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalKeyboardView}
+        >
+          <View style={styles.modalOverlay}>
+            <Pressable style={styles.modalBackdrop} onPress={closeEditProduct} />
+            <LinearGradient
+              colors={["rgba(255,255,251,0.98)", "rgba(239,244,240,0.96)"]}
+              style={styles.editModal}
+            >
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalEyebrow}>EDYTUJ PRODUKT</Text>
+              <Text style={styles.modalTitle} numberOfLines={2}>
+                {editProduct?.name || "Bez nazwy"}
+              </Text>
+              <Text style={styles.modalSubtitle}>
+                Ustaw indywidualny czas przydatności po otwarciu. Puste pole przywraca wartość domyślną dla typu produktu.
+              </Text>
+              <View style={styles.fieldGroup}>
+                <Text style={styles.fieldLabel}>Liczba dni po otwarciu</Text>
+                <TextInput
+                  accessibilityLabel="Liczba dni po otwarciu"
+                  value={shelfLifeValue}
+                  onChangeText={setShelfLifeValue}
+                  keyboardType="number-pad"
+                  placeholder="Wartość domyślna"
+                  placeholderTextColor="#98A2A3"
+                  editable={!savingProduct}
+                  style={styles.input}
+                />
+              </View>
+              <View style={styles.modalActions}>
+                <Pressable
+                  disabled={savingProduct}
+                  onPress={closeEditProduct}
+                  style={[styles.modalActionButton, styles.modalCancelButton, savingProduct && styles.actionDisabled]}
+                >
+                  <Text style={styles.modalCancelText}>Anuluj</Text>
+                </Pressable>
+                <Pressable
+                  disabled={savingProduct}
+                  onPress={saveProduct}
+                  style={[styles.modalActionButton, styles.modalSaveButton, savingProduct && styles.actionDisabled]}
+                >
+                  {savingProduct ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalSaveText}>Zapisz</Text>
+                  )}
+                </Pressable>
+              </View>
+            </LinearGradient>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -290,6 +496,31 @@ const styles = StyleSheet.create({
   metaPill: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 9, backgroundColor: "rgba(48,75,84,0.08)" },
   metaPillText: { color: "#476068", fontSize: 11, lineHeight: 14, fontWeight: "700" },
   unitText: { color: "#718287", fontSize: 12, lineHeight: 17 },
+  shelfLifeText: { color: "#718287", fontSize: 11, lineHeight: 16, marginTop: 7 },
+  cardActions: { gap: 7, alignSelf: "stretch", justifyContent: "center" },
+  cardAction: { minWidth: 68, minHeight: 34, borderRadius: 12, alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  editAction: { backgroundColor: "rgba(48,75,84,0.09)" },
+  editActionText: { color: "#304B54", fontSize: 12, fontWeight: "800" },
+  deleteAction: { backgroundColor: "rgba(164,73,62,0.09)" },
+  deleteActionText: { color: "#A4493E", fontSize: 12, fontWeight: "800" },
+  actionDisabled: { opacity: 0.45 },
+  modalKeyboardView: { flex: 1 },
+  modalOverlay: { flex: 1, alignItems: "center", justifyContent: "flex-end", paddingHorizontal: 20, paddingBottom: 24 },
+  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(19,35,39,0.34)" },
+  editModal: { width: "100%", maxWidth: 430, borderRadius: 30, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", padding: 20, gap: 11, elevation: 10, shadowColor: "#173746", shadowOpacity: 0.25, shadowRadius: 24, shadowOffset: { width: 0, height: 12 } },
+  modalHandle: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "rgba(48,75,84,0.18)", marginBottom: 4 },
+  modalEyebrow: { color: "#7D9098", fontSize: 10, lineHeight: 14, fontWeight: "800", letterSpacing: 1.2 },
+  modalTitle: { color: "#172222", fontSize: 25, lineHeight: 30, fontWeight: "700" },
+  modalSubtitle: { color: "#667579", fontSize: 13, lineHeight: 19 },
+  fieldGroup: { gap: 7, marginTop: 2 },
+  fieldLabel: { color: "#33484D", fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  input: { minHeight: 56, backgroundColor: "rgba(238,244,242,0.80)", borderRadius: 18, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", paddingHorizontal: 17, paddingVertical: 14, color: "#162326", fontSize: 16 },
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  modalActionButton: { flex: 1, minHeight: 52, borderRadius: 18, alignItems: "center", justifyContent: "center" },
+  modalCancelButton: { backgroundColor: "rgba(48,75,84,0.07)" },
+  modalSaveButton: { backgroundColor: "#304B54" },
+  modalCancelText: { color: "#596B70", fontSize: 14, fontWeight: "700" },
+  modalSaveText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
 });
 
 const glyphStyles = StyleSheet.create({
