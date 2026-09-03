@@ -6,7 +6,6 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
-  Modal,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
@@ -20,13 +19,7 @@ export default function ScannerScreen() {
   const [processing, setProcessing] = useState(false);
   const [lastCode, setLastCode] = useState(null);
   const [frozen, setFrozen] = useState(false);
-  const [pendingCode, setPendingCode] = useState(null);
-  const [availableLenses, setAvailableLenses] = useState([]);
-  const [selectedLens, setSelectedLens] = useState(null);
-  const [showLensPicker, setShowLensPicker] = useState(false);
-  const [lensesLoading, setLensesLoading] = useState(false);
   const pendingRef = useRef(null);
-  const cameraRef = useRef(null);
   const { token } = useAuth();
   const router = useRouter();
 
@@ -46,24 +39,7 @@ export default function ScannerScreen() {
 
     if (pendingRef.current === data) return;
     pendingRef.current = data;
-    setPendingCode(data);
     lookupProduct(data);
-  };
-
-  const hydrateLenses = async () => {
-    if (!cameraRef.current?.getAvailableLensesAsync) return;
-    setLensesLoading(true);
-    try {
-      const lenses = await cameraRef.current.getAvailableLensesAsync();
-      if (Array.isArray(lenses) && lenses.length) {
-        setAvailableLenses(lenses);
-        setSelectedLens((prev) => (prev && lenses.includes(prev) ? prev : lenses[0]));
-      }
-    } catch (err) {
-      console.warn("Nie udało się pobrać listy obiektywów", err);
-    } finally {
-      setLensesLoading(false);
-    }
   };
 
   const fetchOffProduct = async (ean) => {
@@ -109,21 +85,18 @@ export default function ScannerScreen() {
       setProcessing(false);
       setFrozen(false);
       setLastCode(null);
-      setPendingCode(null);
       pendingRef.current = null;
     };
   }, []);
 
-  const handleCameraReady = async () => {
-    setReady(true);
-    await hydrateLenses();
-  };
+  const handleCameraReady = () => setReady(true);
 
-  const handleAvailableLensesChanged = ({ nativeEvent }) => {
-    const list = nativeEvent?.lenses;
-    if (!Array.isArray(list) || !list.length) return;
-    setAvailableLenses(list);
-    setSelectedLens((prev) => (prev && list.includes(prev) ? prev : list[0]));
+  const handleCameraMountError = ({ message }) => {
+    setReady(false);
+    Alert.alert(
+      "Nie udało się uruchomić aparatu",
+      message || "Zamknij skaner i spróbuj ponownie."
+    );
   };
 
   const lookupProduct = async (ean) => {
@@ -170,7 +143,6 @@ export default function ScannerScreen() {
       setTimeout(() => {
         setFrozen(false);
         setLastCode(null);
-        setPendingCode(null);
         pendingRef.current = null;
       }, success ? 1000 : 600);
     }
@@ -190,31 +162,20 @@ export default function ScannerScreen() {
   return (
     <View style={styles.scannerWrap}>
       <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFillObject}
+        style={styles.camera}
         facing="back"
         zoom={0}
+        autofocus="on"
         onBarcodeScanned={onBarcodeScanned}
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8"] }}
         onCameraReady={handleCameraReady}
-        selectedLens={selectedLens || undefined}
-        onAvailableLensesChanged={handleAvailableLensesChanged}
+        onMountError={handleCameraMountError}
       />
       <View style={styles.overlay}>
         <Text style={styles.hint}>Nakieruj na kod EAN</Text>
         <Pressable style={styles.secondaryBtn} onPress={() => router.back()}>
           <Text style={styles.secondaryBtnText}>Anuluj</Text>
         </Pressable>
-        {availableLenses.length > 1 ? (
-          <Pressable
-            style={styles.lensButton}
-            onPress={() => setShowLensPicker(true)}
-          >
-            <Text style={styles.lensButtonText}>
-              {formatLensLabel(selectedLens)}
-            </Text>
-          </Pressable>
-        ) : null}
         {processing && (
           <View style={styles.processingBadge}>
             <ActivityIndicator size="small" color="#fff" />
@@ -228,56 +189,9 @@ export default function ScannerScreen() {
         )}
       </View>
       <StatusBar style="light" />
-
-      <Modal
-        visible={showLensPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowLensPicker(false)}
-      >
-        <Pressable style={styles.lensModalBackdrop} onPress={() => setShowLensPicker(false)}>
-          <View style={styles.lensModalCard}>
-            <Text style={styles.lensModalTitle}>Wybierz obiektyw</Text>
-            {lensesLoading ? (
-              <View style={styles.lensModalLoader}>
-                <ActivityIndicator size="small" color="#1F6FEB" />
-              </View>
-            ) : (
-              availableLenses.map((lens) => {
-                const isActive = selectedLens === lens;
-                return (
-                  <Pressable
-                    key={lens}
-                    style={[styles.lensOption, isActive && styles.lensOptionActive]}
-                    onPress={() => {
-                      setSelectedLens(lens);
-                      setShowLensPicker(false);
-                    }}
-                  >
-                    <Text style={[styles.lensOptionText, isActive && styles.lensOptionTextActive]}>
-                      {formatLensLabel(lens)}
-                    </Text>
-                  </Pressable>
-                );
-              })
-            )}
-          </View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
-
-const LENS_LABELS = {
-  builtInWideAngleCamera: "Standardowy",
-  builtInUltraWideCamera: "Ultraszeroki",
-  builtInTelephotoCamera: "Tele",
-};
-
-const formatLensLabel = (lens) => {
-  if (!lens) return "Obiektyw";
-  return LENS_LABELS[lens] || lens;
-};
 
 const styles = StyleSheet.create({
   center:{ flex:1, alignItems:"center", justifyContent:"center", backgroundColor:"#F7F7FB" },
@@ -286,20 +200,11 @@ const styles = StyleSheet.create({
   primaryBtnText:{ color:"#fff", fontWeight:"700" },
 
   scannerWrap:{ flex:1, backgroundColor:"black" },
+  camera:{ flex:1 },
   overlay:{ position:"absolute", bottom:28, left:20, right:20, alignItems:"center", gap:10 },
   hint:{ paddingHorizontal:12, paddingVertical:8, color:"#fff", backgroundColor:"rgba(0,0,0,0.5)", borderRadius:10, fontSize:14 },
   secondaryBtn:{ backgroundColor:"#fff", paddingHorizontal:16, paddingVertical:12, borderRadius:12 },
   secondaryBtnText:{ color:"#111", fontWeight:"700" },
   processingBadge:{ flexDirection:"row", alignItems:"center", gap:8, paddingHorizontal:14, paddingVertical:8, backgroundColor:"rgba(0,0,0,0.55)", borderRadius:12 },
   processingText:{ color:"#fff", fontWeight:"600" },
-  lensButton:{ backgroundColor:"rgba(0,0,0,0.45)", paddingHorizontal:14, paddingVertical:10, borderRadius:12 },
-  lensButtonText:{ color:"#fff", fontWeight:"600" },
-  lensModalBackdrop:{ flex:1, backgroundColor:"rgba(0,0,0,0.4)", justifyContent:"center", alignItems:"center" },
-  lensModalCard:{ backgroundColor:"#fff", borderRadius:16, padding:20, width:"80%", gap:8 },
-  lensModalTitle:{ fontSize:18, fontWeight:"700", marginBottom:6, textAlign:"center", color:"#1F1F1F" },
-  lensModalLoader:{ paddingVertical:20 },
-  lensOption:{ paddingVertical:12, paddingHorizontal:12, borderRadius:12, backgroundColor:"#F6F6FB" },
-  lensOptionActive:{ backgroundColor:"rgba(31,111,235,0.12)", borderWidth:1, borderColor:"#1F6FEB" },
-  lensOptionText:{ textAlign:"center", fontSize:15, color:"#2F2F2F" },
-  lensOptionTextActive:{ color:"#1F6FEB", fontWeight:"700" },
 });
