@@ -94,6 +94,7 @@ export default function PlanMealsScreen() {
   const [slots, setSlots] = useState(() => buildSlots(todayIso(), DEFAULT_DAYS));
   const [pickerDate, setPickerDate] = useState(null);
   const [aiVisible, setAiVisible] = useState(false);
+  const [includeFridgeContents, setIncludeFridgeContents] = useState(true);
   const [aiGuidelines, setAiGuidelines] = useState("");
   const [aiError, setAiError] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -217,8 +218,11 @@ export default function PlanMealsScreen() {
     setGenerating(true);
     setAiError(null);
     try {
+      const generatorPath = includeFridgeContents
+        ? "generate-from-recipes-with-fridge"
+        : "generate-from-recipes";
       const response = await fetch(
-        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/ai/meal-plans/generate-from-recipes`,
+        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/ai/meal-plans/${generatorPath}`,
         {
           method: "POST",
           headers,
@@ -667,6 +671,37 @@ export default function PlanMealsScreen() {
             <Text style={styles.aiDescription}>
               Uzupełnione dni zostaną przekazane AI i pozostaną bez zmian. Uwagi są opcjonalne.
             </Text>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityLabel="Uwzględnij to, co mam w lodówce"
+              accessibilityState={{ checked: includeFridgeContents, disabled: generating }}
+              disabled={generating}
+              onPress={() => setIncludeFridgeContents((current) => !current)}
+              style={({ pressed }) => [
+                styles.fridgeCheckboxRow,
+                includeFridgeContents && styles.fridgeCheckboxRowSelected,
+                pressed && !generating && styles.controlPressed,
+              ]}
+            >
+              <View
+                style={[
+                  styles.fridgeCheckbox,
+                  includeFridgeContents && styles.fridgeCheckboxSelected,
+                ]}
+              >
+                {includeFridgeContents ? (
+                  <Text style={styles.fridgeCheckboxMark}>✓</Text>
+                ) : null}
+              </View>
+              <View style={styles.fridgeCheckboxCopy}>
+                <Text style={styles.fridgeCheckboxTitle}>
+                  Uwzględnij to, co mam w lodówce
+                </Text>
+                <Text style={styles.fridgeCheckboxDescription}>
+                  AI dobierze przepisy również do dostępnych produktów i ich terminów ważności.
+                </Text>
+              </View>
+            </Pressable>
             {filledCount ? (
               <View style={styles.contextNotice}>
                 <Text style={styles.contextNoticeIcon}>✓</Text>
@@ -815,6 +850,14 @@ const styles = StyleSheet.create({
   recipeOptionDescription: { color: "#748489", fontSize: 12, lineHeight: 17, marginTop: 3 },
   recipeOptionCheck: { color: "#4F7469", fontSize: 20, fontWeight: "800" },
   aiDescription: { color: "#65777C", fontSize: 13, lineHeight: 19, marginTop: 11 },
+  fridgeCheckboxRow: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 17, borderWidth: 1, borderColor: "rgba(73,102,108,0.12)", backgroundColor: "rgba(255,255,255,0.62)", paddingHorizontal: 13, paddingVertical: 11, marginTop: 13 },
+  fridgeCheckboxRowSelected: { borderColor: "rgba(76,116,105,0.24)", backgroundColor: "rgba(221,237,231,0.76)" },
+  fridgeCheckbox: { width: 27, height: 27, borderRadius: 9, alignItems: "center", justifyContent: "center", borderWidth: 1.7, borderColor: "#9CACA9", backgroundColor: "rgba(255,255,255,0.74)" },
+  fridgeCheckboxSelected: { borderColor: "#4F7469", backgroundColor: "#4F7469" },
+  fridgeCheckboxMark: { color: "#FFFFFF", fontSize: 16, lineHeight: 19, fontWeight: "900" },
+  fridgeCheckboxCopy: { flex: 1 },
+  fridgeCheckboxTitle: { color: "#263D3C", fontSize: 14, lineHeight: 19, fontWeight: "800" },
+  fridgeCheckboxDescription: { color: "#697D79", fontSize: 11, lineHeight: 16, marginTop: 2 },
   contextNotice: { flexDirection: "row", alignItems: "center", gap: 9, borderRadius: 15, paddingHorizontal: 12, paddingVertical: 10, marginTop: 13, backgroundColor: "rgba(217,233,226,0.70)" },
   contextNoticeIcon: { width: 22, height: 22, borderRadius: 11, color: "#FFFFFF", backgroundColor: "#52756D", textAlign: "center", lineHeight: 22, fontSize: 12, fontWeight: "900", overflow: "hidden" },
   contextNoticeText: { flex: 1, color: "#526E68", fontSize: 12, lineHeight: 17, fontWeight: "700" },
