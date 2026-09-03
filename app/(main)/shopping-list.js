@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   RefreshControl,
@@ -88,7 +89,12 @@ export default function ShoppingListScreen() {
   const [generating, setGenerating] = useState(false);
   const [generationError, setGenerationError] = useState(null);
   const [proposal, setProposal] = useState(null);
-  const [checkedItems, setCheckedItems] = useState(() => new Set());
+  const [shoppingItems, setShoppingItems] = useState([]);
+  const [listActionError, setListActionError] = useState(null);
+  const [listFeedback, setListFeedback] = useState(null);
+  const [savingProposal, setSavingProposal] = useState(false);
+  const [updatingItemIds, setUpdatingItemIds] = useState(() => new Set());
+  const [deletingChecked, setDeletingChecked] = useState(false);
 
   const headers = useMemo(
     () => ({
@@ -98,10 +104,11 @@ export default function ShoppingListScreen() {
     [token]
   );
 
-  const loadMeals = useCallback(async (showRefreshing = false) => {
+  const loadScreenData = useCallback(async (showRefreshing = false) => {
     if (!activeFridge) {
       setMeals([]);
       setSelectedIds([]);
+      setShoppingItems([]);
       setLoadError(null);
       setLoading(false);
       setRefreshing(false);
@@ -111,19 +118,28 @@ export default function ShoppingListScreen() {
     if (showRefreshing) setRefreshing(true);
     else setLoading(true);
     setLoadError(null);
+    setListActionError(null);
+    setListFeedback(null);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals`,
-        { method: "GET", headers }
-      );
-      const payload = await readPayload(response);
-      if (!response.ok) {
-        throw new Error(payload?.message || `HTTP ${response.status}`);
+      const fridgePath = `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}`;
+      const [mealsResponse, shoppingListResponse] = await Promise.all([
+        fetch(`${fridgePath}/planned-meals`, { method: "GET", headers }),
+        fetch(`${fridgePath}/shopping-list`, { method: "GET", headers }),
+      ]);
+      const [mealsPayload, shoppingListPayload] = await Promise.all([
+        readPayload(mealsResponse),
+        readPayload(shoppingListResponse),
+      ]);
+      if (!mealsResponse.ok) {
+        throw new Error(mealsPayload?.message || `HTTP ${mealsResponse.status}`);
+      }
+      if (!shoppingListResponse.ok) {
+        throw new Error(shoppingListPayload?.message || `HTTP ${shoppingListResponse.status}`);
       }
 
       const today = todayIso();
-      const upcomingMeals = (Array.isArray(payload) ? payload : [])
+      const upcomingMeals = (Array.isArray(mealsPayload) ? mealsPayload : [])
         .filter((meal) => meal?.id && parseIsoDate(meal?.plannedDate) && meal.plannedDate >= today)
         .sort((left, right) => {
           const dateComparison = left.plannedDate.localeCompare(right.plannedDate);
@@ -133,12 +149,14 @@ export default function ShoppingListScreen() {
 
       setMeals(upcomingMeals);
       setSelectedIds(upcomingMeals.slice(0, MAX_MEALS).map((meal) => String(meal.id)));
+      setShoppingItems(
+        Array.isArray(shoppingListPayload?.items) ? shoppingListPayload.items : []
+      );
       setSelectionError(null);
       setGenerationError(null);
       setProposal(null);
-      setCheckedItems(new Set());
     } catch (error) {
-      setLoadError(error.message || "Nie udało się pobrać zaplanowanych posiłków");
+      setLoadError(error.message || "Nie udało się pobrać danych listy zakupów");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -147,8 +165,8 @@ export default function ShoppingListScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadMeals();
-    }, [loadMeals])
+      loadScreenData();
+    }, [loadScreenData])
   );
 
   const toggleMeal = (mealId) => {
@@ -167,7 +185,6 @@ export default function ShoppingListScreen() {
     setSelectionError(null);
     setGenerationError(null);
     setProposal(null);
-    setCheckedItems(new Set());
   };
 
   const generateShoppingList = async () => {
@@ -209,7 +226,6 @@ export default function ShoppingListScreen() {
           clientKey: createItemKey(item, index),
         })),
       });
-      setCheckedItems(new Set());
     } catch (error) {
       setGenerationError(error.message || "Nie udało się wygenerować listy zakupów");
     } finally {
@@ -217,18 +233,176 @@ export default function ShoppingListScreen() {
     }
   };
 
-  const toggleShoppingItem = (key) => {
-    setCheckedItems((current) => {
+  const setItemUpdating = (itemId, updating) => {
+    setUpdatingItemIds((current) => {
       const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (updating) next.add(itemId);
+      else next.delete(itemId);
       return next;
     });
   };
 
+  const replaceShoppingItem = (updatedItem) => {
+    setShoppingItems((current) => {
+      const updated = current.map((item) => (
+        String(item.id) === String(updatedItem.id) ? updatedItem : item
+      ));
+      return [
+        ...updated.filter((item) => !item.checked),
+        ...updated.filter((item) => item.checked),
+      ];
+    });
+  };
+
+  const toggleShoppingItem = async (item) => {
+    const itemId = String(item?.id || "");
+    if (!activeFridge || !itemId || updatingItemIds.has(itemId)) return;
+
+    setItemUpdating(itemId, true);
+    setListActionError(null);
+    setListFeedback(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/items/${encodeURIComponent(itemId)}/checked`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ checked: !item.checked }),
+        }
+      );
+      const payload = await readPayload(response);
+      if (!response.ok || !payload?.id) {
+        throw new Error(payload?.message || `HTTP ${response.status}`);
+      }
+      replaceShoppingItem(payload);
+    } catch (error) {
+      setListActionError(error.message || "Nie udało się zaktualizować pozycji");
+    } finally {
+      setItemUpdating(itemId, false);
+    }
+  };
+
+  const deleteShoppingItem = async (item) => {
+    const itemId = String(item?.id || "");
+    if (!activeFridge || !itemId || updatingItemIds.has(itemId)) return;
+
+    setItemUpdating(itemId, true);
+    setListActionError(null);
+    setListFeedback(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/items/${encodeURIComponent(itemId)}`,
+        { method: "DELETE", headers }
+      );
+      const payload = await readPayload(response);
+      if (!response.ok) {
+        throw new Error(payload?.message || `HTTP ${response.status}`);
+      }
+      setShoppingItems((current) => current.filter(
+        (currentItem) => String(currentItem.id) !== itemId
+      ));
+    } catch (error) {
+      setListActionError(error.message || "Nie udało się usunąć pozycji");
+    } finally {
+      setItemUpdating(itemId, false);
+    }
+  };
+
+  const confirmDeleteShoppingItem = (item) => {
+    Alert.alert(
+      "Usunąć z listy?",
+      item?.name || "Ta pozycja zostanie usunięta.",
+      [
+        { text: "Anuluj", style: "cancel" },
+        { text: "Usuń", style: "destructive", onPress: () => deleteShoppingItem(item) },
+      ]
+    );
+  };
+
+  const saveProposal = async () => {
+    if (!activeFridge || !proposal?.items?.length || savingProposal) return;
+
+    const items = proposal.items.map((item) => ({
+      name: item.name,
+      unit: item.unit || null,
+      sources: Array.isArray(item.sources)
+        ? item.sources.map((source) => ({
+          plannedMealIngredientId: source.plannedMealIngredientId,
+          amount: source.amount ?? null,
+        }))
+        : [],
+    }));
+    if (items.some((item) => !item.sources.length)) {
+      setGenerationError("Serwer zwrócił pozycję bez źródłowego składnika.");
+      return;
+    }
+
+    setSavingProposal(true);
+    setGenerationError(null);
+    setListActionError(null);
+    setListFeedback(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/import`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ items }),
+        }
+      );
+      const payload = await readPayload(response);
+      if (!response.ok || !Array.isArray(payload?.items)) {
+        throw new Error(payload?.message || `HTTP ${response.status}`);
+      }
+      setShoppingItems(payload.items);
+      setProposal(null);
+      setListFeedback("Lista zakupów została zapisana.");
+    } catch (error) {
+      setGenerationError(error.message || "Nie udało się zapisać listy zakupów");
+    } finally {
+      setSavingProposal(false);
+    }
+  };
+
+  const deleteCheckedItems = async () => {
+    if (!activeFridge || deletingChecked) return;
+
+    setDeletingChecked(true);
+    setListActionError(null);
+    setListFeedback(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/checked-items`,
+        { method: "DELETE", headers }
+      );
+      const payload = await readPayload(response);
+      if (!response.ok) {
+        throw new Error(payload?.message || `HTTP ${response.status}`);
+      }
+      setShoppingItems((current) => current.filter((item) => !item.checked));
+    } catch (error) {
+      setListActionError(error.message || "Nie udało się usunąć kupionych pozycji");
+    } finally {
+      setDeletingChecked(false);
+    }
+  };
+
+  const confirmDeleteCheckedItems = () => {
+    Alert.alert(
+      "Usunąć kupione produkty?",
+      "Wszystkie odhaczone pozycje znikną z listy.",
+      [
+        { text: "Anuluj", style: "cancel" },
+        { text: "Usuń", style: "destructive", onPress: deleteCheckedItems },
+      ]
+    );
+  };
+
+  const checkedCount = shoppingItems.filter((item) => item.checked).length;
+
   const headerSubtitle = !activeFridge
     ? "Wybierz aktywną lodówkę"
-    : `${selectedIds.length} z ${MAX_MEALS} posiłków wybranych`;
+    : `${shoppingItems.length} ${shoppingItems.length === 1 ? "pozycja" : "pozycji"} na liście`;
 
   return (
     <LinearGradient
@@ -266,7 +440,7 @@ export default function ShoppingListScreen() {
               </View>
               <View style={styles.errorCopy}>
                 <Text style={styles.errorText}>{loadError}</Text>
-                <Pressable onPress={() => loadMeals()}>
+                <Pressable onPress={() => loadScreenData()}>
                   <Text style={styles.retryText}>Spróbuj ponownie</Text>
                 </Pressable>
               </View>
@@ -276,7 +450,7 @@ export default function ShoppingListScreen() {
           {loading ? (
             <View style={styles.loaderBox}>
               <ActivityIndicator size="large" color="#304B54" />
-              <Text style={styles.loaderText}>Pobieram zaplanowane posiłki...</Text>
+              <Text style={styles.loaderText}>Pobieram listę zakupów...</Text>
             </View>
           ) : (
             <ScrollView
@@ -285,12 +459,12 @@ export default function ShoppingListScreen() {
               refreshControl={(
                 <RefreshControl
                   refreshing={refreshing}
-                  onRefresh={() => loadMeals(true)}
+                  onRefresh={() => loadScreenData(true)}
                   tintColor="#304B54"
                 />
               )}
             >
-              {!activeFridge || !meals.length ? (
+              {!activeFridge ? (
                 <LinearGradient
                   colors={["rgba(255,255,251,0.93)", "rgba(246,247,240,0.82)"]}
                   style={styles.emptyBox}
@@ -298,26 +472,154 @@ export default function ShoppingListScreen() {
                   <View style={styles.emptyIconBadge}>
                     <BasketGlyph />
                   </View>
-                  <Text style={styles.emptyTitle}>
-                    {activeFridge ? "Brak zaplanowanych posiłków" : "Wybierz aktywną lodówkę"}
-                  </Text>
+                  <Text style={styles.emptyTitle}>Wybierz aktywną lodówkę</Text>
                   <Text style={styles.emptySubtitle}>
-                    {activeFridge
-                      ? "Lista zakupów powstaje na podstawie posiłków zaplanowanych na najbliższe dni."
-                      : "Lista zakupów jest obliczana dla zapasów konkretnej lodówki."}
+                    Lista zakupów jest przypisana do konkretnej lodówki.
                   </Text>
                   <Pressable
                     accessibilityRole="button"
-                    onPress={() => router.push(activeFridge ? "/plan-meals" : "/fridges")}
+                    onPress={() => router.push("/fridges")}
                     style={({ pressed }) => [styles.emptyAction, pressed && styles.buttonPressed]}
                   >
-                    <Text style={styles.emptyActionText}>
-                      {activeFridge ? "Zaplanuj posiłki" : "Wybierz lodówkę"}
-                    </Text>
+                    <Text style={styles.emptyActionText}>Wybierz lodówkę</Text>
                   </Pressable>
                 </LinearGradient>
               ) : (
                 <>
+                  <View style={styles.savedSection}>
+                    <View style={styles.sectionHeader}>
+                      <View>
+                        <Text style={styles.sectionEyebrow}>TWOJA LISTA</Text>
+                        <Text style={styles.sectionTitle}>
+                          {shoppingItems.length ? "Do kupienia" : "Lista jest pusta"}
+                        </Text>
+                      </View>
+                      {shoppingItems.length ? (
+                        <View style={styles.counterBadge}>
+                          <Text style={styles.counterText}>
+                            {checkedCount}/{shoppingItems.length}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+
+                    <Text style={styles.sectionHint}>
+                      Odhaczenia i zmiany są zapisywane dla wszystkich użytkowników tej lodówki.
+                    </Text>
+
+                    {listActionError ? (
+                      <View style={styles.inlineError}>
+                        <Text style={styles.inlineErrorText}>{listActionError}</Text>
+                      </View>
+                    ) : null}
+
+                    {listFeedback ? (
+                      <View style={styles.successBanner}>
+                        <Text style={styles.successBannerText}>{listFeedback}</Text>
+                      </View>
+                    ) : null}
+
+                    {shoppingItems.length ? (
+                      <>
+                        <View style={styles.shoppingItems}>
+                          {shoppingItems.map((item) => {
+                            const itemId = String(item.id);
+                            const busy = updatingItemIds.has(itemId);
+                            return (
+                              <View
+                                key={itemId}
+                                style={[
+                                  styles.shoppingItem,
+                                  item.checked && styles.shoppingItemChecked,
+                                  busy && styles.itemBusy,
+                                ]}
+                              >
+                                <Pressable
+                                  accessibilityRole="checkbox"
+                                  accessibilityState={{ checked: Boolean(item.checked), disabled: busy }}
+                                  accessibilityLabel={`${item.checked ? "Oznacz jako niekupione" : "Oznacz jako kupione"}: ${item.name}`}
+                                  disabled={busy}
+                                  onPress={() => toggleShoppingItem(item)}
+                                  style={({ pressed }) => [
+                                    styles.shoppingItemMain,
+                                    pressed && styles.cardPressed,
+                                  ]}
+                                >
+                                  <View style={[styles.checkbox, item.checked && styles.checkboxSelected]}>
+                                    {item.checked ? <Text style={styles.checkmark}>✓</Text> : null}
+                                  </View>
+                                  <View style={styles.shoppingItemCopy}>
+                                    <Text
+                                      style={[styles.shoppingItemName, item.checked && styles.checkedText]}
+                                      numberOfLines={2}
+                                    >
+                                      {item?.name || "Produkt"}
+                                    </Text>
+                                    <Text style={[styles.shoppingItemAmount, item.checked && styles.checkedText]}>
+                                      {formatAmount(item)}
+                                    </Text>
+                                  </View>
+                                </Pressable>
+                                <Pressable
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Usuń ${item?.name || "produkt"} z listy`}
+                                  disabled={busy}
+                                  onPress={() => confirmDeleteShoppingItem(item)}
+                                  hitSlop={8}
+                                  style={({ pressed }) => [
+                                    styles.removeItemButton,
+                                    pressed && styles.buttonPressed,
+                                  ]}
+                                >
+                                  {busy ? (
+                                    <ActivityIndicator size="small" color="#8F4D46" />
+                                  ) : (
+                                    <Text style={styles.removeItemText}>−</Text>
+                                  )}
+                                </Pressable>
+                              </View>
+                            );
+                          })}
+                        </View>
+
+                        {checkedCount ? (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ disabled: deletingChecked }}
+                            disabled={deletingChecked}
+                            onPress={confirmDeleteCheckedItems}
+                            style={({ pressed }) => [
+                              styles.clearCheckedButton,
+                              deletingChecked && styles.buttonDisabled,
+                              pressed && !deletingChecked && styles.buttonPressed,
+                            ]}
+                          >
+                            {deletingChecked ? (
+                              <ActivityIndicator size="small" color="#8F4D46" />
+                            ) : null}
+                            <Text style={styles.clearCheckedText}>
+                              Usuń kupione ({checkedCount})
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </>
+                    ) : (
+                      <View style={styles.savedEmptyBox}>
+                        <BasketGlyph />
+                        <View style={styles.savedEmptyCopy}>
+                          <Text style={styles.savedEmptyTitle}>Jeszcze nic tu nie ma</Text>
+                          <Text style={styles.savedEmptyText}>
+                            Wygeneruj propozycję poniżej i dodaj ją do tej listy.
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.generatorDivider} />
+
+                  {meals.length ? (
+                    <>
                   <View style={styles.sectionHeader}>
                     <View>
                       <Text style={styles.sectionEyebrow}>WYBIERZ POSIŁKI</Text>
@@ -394,7 +696,7 @@ export default function ShoppingListScreen() {
                   <View style={styles.infoBox}>
                     <Text style={styles.infoIcon}>i</Text>
                     <Text style={styles.infoText}>
-                      Lista uwzględnia zapasy i rezerwacje, ale nie jest zapisywana i niczego nie rezerwuje.
+                      Generator uwzględnia zapasy i rezerwacje. Wynik zapiszesz jednym przyciskiem do listy powyżej.
                     </Text>
                   </View>
 
@@ -409,47 +711,48 @@ export default function ShoppingListScreen() {
                               : "Masz już wszystko"}
                           </Text>
                         </View>
-                        {proposal.items.length ? (
-                          <Text style={styles.doneCount}>
-                            {checkedItems.size}/{proposal.items.length}
-                          </Text>
-                        ) : null}
                       </View>
 
                       {proposal.items.length ? (
-                        <View style={styles.shoppingItems}>
-                          {proposal.items.map((item) => {
-                            const checked = checkedItems.has(item.clientKey);
-                            return (
-                              <Pressable
-                                key={item.clientKey}
-                                accessibilityRole="checkbox"
-                                accessibilityState={{ checked }}
-                                onPress={() => toggleShoppingItem(item.clientKey)}
-                                style={({ pressed }) => [
-                                  styles.shoppingItem,
-                                  checked && styles.shoppingItemChecked,
-                                  pressed && styles.cardPressed,
-                                ]}
-                              >
-                                <View style={[styles.checkbox, checked && styles.checkboxSelected]}>
-                                  {checked ? <Text style={styles.checkmark}>✓</Text> : null}
+                        <>
+                          <View style={styles.shoppingItems}>
+                            {proposal.items.map((item) => (
+                              <View key={item.clientKey} style={styles.proposalItem}>
+                                <View style={styles.proposalPlus}>
+                                  <Text style={styles.proposalPlusText}>+</Text>
                                 </View>
                                 <View style={styles.shoppingItemCopy}>
-                                  <Text
-                                    style={[styles.shoppingItemName, checked && styles.checkedText]}
-                                    numberOfLines={2}
-                                  >
+                                  <Text style={styles.shoppingItemName} numberOfLines={2}>
                                     {item?.name || "Produkt"}
                                   </Text>
-                                  <Text style={[styles.shoppingItemAmount, checked && styles.checkedText]}>
+                                  <Text style={styles.shoppingItemAmount}>
                                     {formatAmount(item)}
                                   </Text>
                                 </View>
-                              </Pressable>
-                            );
-                          })}
-                        </View>
+                              </View>
+                            ))}
+                          </View>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ disabled: savingProposal }}
+                            disabled={savingProposal}
+                            onPress={saveProposal}
+                            style={({ pressed }) => [
+                              styles.saveButton,
+                              savingProposal && styles.buttonDisabled,
+                              pressed && !savingProposal && styles.buttonPressed,
+                            ]}
+                          >
+                            {savingProposal ? (
+                              <ActivityIndicator color="#FFFFFF" />
+                            ) : (
+                              <Text style={styles.saveButtonIcon}>+</Text>
+                            )}
+                            <Text style={styles.saveButtonText}>
+                              {savingProposal ? "Zapisuję..." : "Dodaj do listy zakupów"}
+                            </Text>
+                          </Pressable>
+                        </>
                       ) : (
                         <LinearGradient
                           colors={["rgba(237,247,242,0.95)", "rgba(246,249,242,0.86)"]}
@@ -462,12 +765,27 @@ export default function ShoppingListScreen() {
                           </Text>
                         </LinearGradient>
                       )}
-
-                      <Text style={styles.localNote}>
-                        Odhaczenia są tymczasowe i znikną po opuszczeniu ekranu.
-                      </Text>
                     </View>
                   ) : null}
+                    </>
+                  ) : (
+                    <LinearGradient
+                      colors={["rgba(255,255,251,0.93)", "rgba(246,247,240,0.82)"]}
+                      style={styles.generatorEmptyBox}
+                    >
+                      <Text style={styles.emptyTitle}>Brak zaplanowanych posiłków</Text>
+                      <Text style={styles.emptySubtitle}>
+                        Zaplanuj posiłki, aby wygenerować na ich podstawie kolejne zakupy.
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => router.push("/plan-meals")}
+                        style={({ pressed }) => [styles.emptyAction, pressed && styles.buttonPressed]}
+                      >
+                        <Text style={styles.emptyActionText}>Zaplanuj posiłki</Text>
+                      </Pressable>
+                    </LinearGradient>
+                  )}
                 </>
               )}
             </ScrollView>
@@ -529,6 +847,15 @@ const styles = StyleSheet.create({
   mealServings: { color: "#65767A", fontSize: 12, lineHeight: 17, marginTop: 2 },
   inlineError: { backgroundColor: "rgba(255,247,244,0.90)", borderWidth: 1, borderColor: "rgba(164,73,62,0.12)", borderRadius: 15, padding: 12, marginTop: 13 },
   inlineErrorText: { color: "#913D34", fontSize: 13, lineHeight: 18, fontWeight: "600" },
+  successBanner: { backgroundColor: "rgba(235,246,239,0.92)", borderWidth: 1, borderColor: "rgba(71,117,93,0.16)", borderRadius: 15, padding: 12, marginBottom: 12 },
+  successBannerText: { color: "#3E6C57", fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  savedSection: { marginBottom: 2 },
+  savedEmptyBox: { minHeight: 92, borderRadius: 21, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", backgroundColor: "rgba(255,255,251,0.78)", paddingHorizontal: 17, paddingVertical: 15, flexDirection: "row", alignItems: "center", gap: 16 },
+  savedEmptyCopy: { flex: 1 },
+  savedEmptyTitle: { color: "#172222", fontSize: 16, lineHeight: 21, fontWeight: "800" },
+  savedEmptyText: { color: "#66787D", fontSize: 12, lineHeight: 17, marginTop: 3 },
+  generatorDivider: { height: 1, backgroundColor: "rgba(77,104,108,0.14)", marginVertical: 25 },
+  generatorEmptyBox: { borderRadius: 26, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", alignItems: "center", paddingHorizontal: 26, paddingVertical: 27, shadowColor: "#173746", shadowOpacity: 0.07, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 2 },
   generateButton: { minHeight: 58, borderRadius: 20, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, backgroundColor: "#304B54", marginTop: 15, paddingHorizontal: 18, shadowColor: "#173746", shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
   generateIcon: { color: "#FFFFFF", fontSize: 22, lineHeight: 25 },
   generateButtonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
@@ -536,19 +863,29 @@ const styles = StyleSheet.create({
   infoIcon: { width: 24, height: 24, borderRadius: 12, textAlign: "center", textAlignVertical: "center", color: "#FFFFFF", backgroundColor: "#6F8989", fontSize: 14, lineHeight: 24, fontWeight: "800" },
   infoText: { flex: 1, color: "#5C7074", fontSize: 12, lineHeight: 17 },
   resultSection: { marginTop: 27 },
-  doneCount: { color: "#60787B", fontSize: 14, fontWeight: "800" },
   shoppingItems: { gap: 9, marginTop: 14 },
-  shoppingItem: { minHeight: 72, borderRadius: 20, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", backgroundColor: "rgba(255,255,251,0.86)", paddingHorizontal: 14, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 13, shadowColor: "#173746", shadowOpacity: 0.07, shadowRadius: 11, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
+  shoppingItem: { minHeight: 72, borderRadius: 20, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", backgroundColor: "rgba(255,255,251,0.86)", paddingHorizontal: 14, flexDirection: "row", alignItems: "center", shadowColor: "#173746", shadowOpacity: 0.07, shadowRadius: 11, shadowOffset: { width: 0, height: 6 }, elevation: 2 },
   shoppingItemChecked: { opacity: 0.58, backgroundColor: "rgba(235,240,236,0.78)" },
+  shoppingItemMain: { flex: 1, minHeight: 70, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 13 },
+  itemBusy: { opacity: 0.62 },
   shoppingItemCopy: { flex: 1 },
   shoppingItemName: { color: "#172222", fontSize: 16, lineHeight: 21, fontWeight: "800" },
   shoppingItemAmount: { color: "#60757A", fontSize: 13, lineHeight: 18, marginTop: 2 },
   checkedText: { textDecorationLine: "line-through", color: "#7D8A8B" },
+  removeItemButton: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(164,73,62,0.09)", marginLeft: 8 },
+  removeItemText: { color: "#8F4D46", fontSize: 25, lineHeight: 27, fontWeight: "500", marginTop: -2 },
+  clearCheckedButton: { minHeight: 48, borderRadius: 17, borderWidth: 1, borderColor: "rgba(143,77,70,0.16)", backgroundColor: "rgba(255,246,243,0.76)", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12, paddingHorizontal: 18 },
+  clearCheckedText: { color: "#8F4D46", fontSize: 14, fontWeight: "800" },
+  proposalItem: { minHeight: 72, borderRadius: 20, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", backgroundColor: "rgba(255,255,251,0.86)", paddingHorizontal: 14, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 13 },
+  proposalPlus: { width: 28, height: 28, borderRadius: 9, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(52,90,99,0.12)" },
+  proposalPlusText: { color: "#345A63", fontSize: 22, lineHeight: 24, fontWeight: "600", marginTop: -2 },
+  saveButton: { minHeight: 56, borderRadius: 19, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, backgroundColor: "#587B70", marginTop: 14, paddingHorizontal: 18, shadowColor: "#173746", shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 3 },
+  saveButtonIcon: { color: "#FFFFFF", fontSize: 23, lineHeight: 25, fontWeight: "500" },
+  saveButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
   completeBox: { alignItems: "center", borderRadius: 24, borderWidth: 1.5, borderColor: "rgba(255,255,255,0.96)", padding: 24, marginTop: 14 },
   completeMark: { width: 42, height: 42, borderRadius: 21, textAlign: "center", textAlignVertical: "center", color: "#FFFFFF", backgroundColor: "#587B70", fontSize: 23, lineHeight: 42, fontWeight: "900" },
   completeTitle: { color: "#1D3934", fontSize: 18, fontWeight: "800", marginTop: 12 },
   completeText: { color: "#637A75", fontSize: 13, lineHeight: 19, textAlign: "center", marginTop: 5 },
-  localNote: { color: "#7A8889", fontSize: 11, lineHeight: 16, textAlign: "center", marginTop: 13 },
 });
 
 const glyphStyles = StyleSheet.create({
