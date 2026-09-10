@@ -49,7 +49,7 @@ function RecipeGlyph({ small = false }) {
 
 export default function RecipesScreen() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { apiFetch, sessionId } = useAuth();
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -58,16 +58,16 @@ export default function RecipesScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadRecipes = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/recipes`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/recipes`, {
         method: "GET",
         headers,
       });
@@ -85,7 +85,7 @@ export default function RecipesScreen() {
   }, [headers]);
 
   const deleteRecipe = useCallback(async (recipe) => {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/recipes/${encodeURIComponent(recipe.id)}`,
       { method: "DELETE", headers }
     );

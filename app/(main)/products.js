@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
@@ -74,7 +74,7 @@ function ProductGlyph() {
 
 export default function ProductsCatalogScreen() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { apiFetch, sessionId, isAdmin } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -87,16 +87,16 @@ export default function ProductsCatalogScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadProducts = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/products`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/products`, {
         method: "GET",
         headers,
       });
@@ -114,18 +114,17 @@ export default function ProductsCatalogScreen() {
     }
   }, [headers]);
 
-  useEffect(() => {
-    loadProducts();
-  }, [loadProducts]);
+  useFocusEffect(useCallback(() => { loadProducts(); }, [loadProducts]));
 
   const openEditProduct = useCallback((product) => {
+    if (!isAdmin) return;
     setEditProduct(product);
     setShelfLifeValue(
       product?.shelfLifeAfterOpeningDays == null
         ? ""
         : String(product.shelfLifeAfterOpeningDays)
     );
-  }, []);
+  }, [isAdmin]);
 
   const closeEditProduct = useCallback(() => {
     if (savingProduct) return;
@@ -134,6 +133,7 @@ export default function ProductsCatalogScreen() {
   }, [savingProduct]);
 
   const saveProduct = useCallback(async () => {
+    if (!isAdmin || savingProduct) return;
     const productId = editProduct?.id;
     if (!productId) {
       Alert.alert("Błąd", "Nie udało się zidentyfikować produktu.");
@@ -152,7 +152,7 @@ export default function ProductsCatalogScreen() {
 
     setSavingProduct(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/products/${productId}/shelf-life-after-opening`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/products/${productId}/shelf-life-after-opening`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({ shelfLifeAfterOpeningDays }),
@@ -173,9 +173,10 @@ export default function ProductsCatalogScreen() {
     } finally {
       setSavingProduct(false);
     }
-  }, [editProduct, headers, shelfLifeValue]);
+  }, [editProduct, headers, shelfLifeValue, isAdmin, savingProduct]);
 
   const deleteProduct = useCallback((product) => {
+    if (!isAdmin) return;
     const productId = product?.id;
     if (!productId) {
       Alert.alert("Błąd", "Nie udało się zidentyfikować produktu.");
@@ -193,7 +194,7 @@ export default function ProductsCatalogScreen() {
           onPress: async () => {
             setDeletingProductId(productId);
             try {
-              const res = await fetch(`${API_BASE_URL}/api/products/${productId}`, {
+              const res = await apiFetch(`${API_BASE_URL}/api/products/${productId}`, {
                 method: "DELETE",
                 headers,
               });
@@ -212,7 +213,7 @@ export default function ProductsCatalogScreen() {
         },
       ]
     );
-  }, [headers]);
+  }, [headers, isAdmin]);
 
   return (
     <LinearGradient
@@ -244,6 +245,10 @@ export default function ProductsCatalogScreen() {
               </Text>
             </View>
           </View>
+
+          <Pressable accessibilityRole="button" onPress={() => router.push("/add-product")} style={{ backgroundColor: "#304B54", borderRadius: 18, padding: 16, alignItems: "center", marginBottom: 14 }}>
+            <Text style={{ color: "#fff", fontWeight: "700", fontSize: 16 }}>Dodaj produkt</Text>
+          </Pressable>
 
           {error ? (
             <View style={styles.errorBanner}>
@@ -290,7 +295,7 @@ export default function ProductsCatalogScreen() {
                   </View>
                   <Text style={styles.emptyTitle}>Katalog jest pusty</Text>
                   <Text style={styles.emptySubtitle}>
-                    Dodaj pierwszy produkt z panelu administratora.
+                    Dodaj pierwszy produkt przyciskiem powyżej.
                   </Text>
                 </LinearGradient>
               )}
@@ -320,7 +325,7 @@ export default function ProductsCatalogScreen() {
                         : `Po otwarciu: ${item.shelfLifeAfterOpeningDays} dni`}
                     </Text>
                   </View>
-                  <View style={styles.cardActions}>
+                  {isAdmin && <View style={styles.cardActions}>
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={`Edytuj ${item?.name || "produkt"}`}
@@ -352,7 +357,7 @@ export default function ProductsCatalogScreen() {
                         <Text style={styles.deleteActionText}>Usuń</Text>
                       )}
                     </Pressable>
-                  </View>
+                  </View>}
                 </LinearGradient>
               )}
             />
@@ -360,7 +365,7 @@ export default function ProductsCatalogScreen() {
         </View>
       </SafeAreaView>
 
-      <Modal transparent visible={Boolean(editProduct)} animationType="fade" onRequestClose={closeEditProduct}>
+      <Modal transparent visible={isAdmin && Boolean(editProduct)} animationType="fade" onRequestClose={closeEditProduct}>
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={styles.modalKeyboardView}

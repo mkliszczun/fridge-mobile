@@ -53,7 +53,7 @@ const formatAmount = (ingredient) => {
 export default function RecipeDetailsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { token } = useAuth();
+  const { apiFetch, sessionId } = useAuth();
   const recipeId = readParam(params?.recipeId);
   const [recipe, setRecipe] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -62,9 +62,9 @@ export default function RecipeDetailsScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadRecipe = useCallback(async () => {
@@ -77,7 +77,7 @@ export default function RecipeDetailsScreen() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/recipes/${encodeURIComponent(recipeId)}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/recipes/${encodeURIComponent(recipeId)}`, {
         method: "GET",
         headers,
       });

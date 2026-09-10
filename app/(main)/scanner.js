@@ -20,7 +20,7 @@ export default function ScannerScreen() {
   const [lastCode, setLastCode] = useState(null);
   const [frozen, setFrozen] = useState(false);
   const pendingRef = useRef(null);
-  const { token } = useAuth();
+  const { apiFetch, sessionId } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -43,11 +43,11 @@ export default function ScannerScreen() {
   };
 
   const fetchOffProduct = async (ean) => {
-    const res = await fetch(`${API_BASE_URL}/api/off/${encodeURIComponent(ean)}`, {
+    const res = await apiFetch(`${API_BASE_URL}/api/off/${encodeURIComponent(ean)}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
       },
     });
     const payload = await res.json().catch(() => null);
@@ -105,11 +105,11 @@ export default function ScannerScreen() {
     setLastCode(ean);
     let success = false;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/products/${encodeURIComponent(ean)}`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/products/${encodeURIComponent(ean)}`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
         },
       });
       if (res.status === 404) {

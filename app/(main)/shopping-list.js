@@ -1,3 +1,4 @@
+import AiBudgetNotice from "../../components/AiBudgetNotice";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -79,7 +80,7 @@ function BasketGlyph() {
 
 export default function ShoppingListScreen() {
   const router = useRouter();
-  const { token, activeFridge } = useAuth();
+  const { canUseAi, apiFetch, sessionId, activeFridge } = useAuth();
   const [meals, setMeals] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -99,9 +100,9 @@ export default function ShoppingListScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadScreenData = useCallback(async (showRefreshing = false) => {
@@ -124,8 +125,8 @@ export default function ShoppingListScreen() {
     try {
       const fridgePath = `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}`;
       const [mealsResponse, shoppingListResponse] = await Promise.all([
-        fetch(`${fridgePath}/planned-meals`, { method: "GET", headers }),
-        fetch(`${fridgePath}/shopping-list`, { method: "GET", headers }),
+        apiFetch(`${fridgePath}/planned-meals`, { method: "GET", headers }),
+        apiFetch(`${fridgePath}/shopping-list`, { method: "GET", headers }),
       ]);
       const [mealsPayload, shoppingListPayload] = await Promise.all([
         readPayload(mealsResponse),
@@ -188,6 +189,7 @@ export default function ShoppingListScreen() {
   };
 
   const generateShoppingList = async () => {
+    if (generating || !canUseAi) return;
     if (!activeFridge) {
       setGenerationError("Najpierw wybierz aktywną lodówkę.");
       return;
@@ -200,7 +202,7 @@ export default function ShoppingListScreen() {
     setGenerating(true);
     setGenerationError(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/ai/shopping-lists/generate`,
         {
           method: "POST",
@@ -262,7 +264,7 @@ export default function ShoppingListScreen() {
     setListActionError(null);
     setListFeedback(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/items/${encodeURIComponent(itemId)}/checked`,
         {
           method: "PATCH",
@@ -290,7 +292,7 @@ export default function ShoppingListScreen() {
     setListActionError(null);
     setListFeedback(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/items/${encodeURIComponent(itemId)}`,
         { method: "DELETE", headers }
       );
@@ -342,7 +344,7 @@ export default function ShoppingListScreen() {
     setListActionError(null);
     setListFeedback(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/import`,
         {
           method: "POST",
@@ -371,7 +373,7 @@ export default function ShoppingListScreen() {
     setListActionError(null);
     setListFeedback(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/shopping-list/checked-items`,
         { method: "DELETE", headers }
       );
@@ -672,14 +674,15 @@ export default function ShoppingListScreen() {
                     </View>
                   ) : null}
 
+                  <AiBudgetNotice />
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityState={{ disabled: generating || !selectedIds.length }}
-                    disabled={generating || !selectedIds.length}
+                    accessibilityState={{ disabled: generating || !canUseAi || !selectedIds.length }}
+                    disabled={generating || !canUseAi || !selectedIds.length}
                     onPress={generateShoppingList}
                     style={({ pressed }) => [
                       styles.generateButton,
-                      (generating || !selectedIds.length) && styles.buttonDisabled,
+                      (generating || !canUseAi || !selectedIds.length) && styles.buttonDisabled,
                       pressed && !generating && selectedIds.length && styles.buttonPressed,
                     ]}
                   >

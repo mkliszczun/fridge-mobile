@@ -1,3 +1,4 @@
+import AiBudgetNotice from "../../components/AiBudgetNotice";
 import { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -84,7 +85,7 @@ function Stepper({ label, value, min, max, onChange, disabled = false }) {
 
 export default function PlanMealsScreen() {
   const router = useRouter();
-  const { token, activeFridge } = useAuth();
+  const { canUseAi, apiFetch, sessionId, activeFridge } = useAuth();
   const [recipes, setRecipes] = useState([]);
   const [loadingRecipes, setLoadingRecipes] = useState(true);
   const [recipesError, setRecipesError] = useState(null);
@@ -104,16 +105,16 @@ export default function PlanMealsScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadRecipes = useCallback(async () => {
     setLoadingRecipes(true);
     setRecipesError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/recipes`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/recipes`, {
         method: "GET",
         headers,
       });
@@ -202,6 +203,7 @@ export default function PlanMealsScreen() {
   };
 
   const handleGenerate = async () => {
+    if (generating || !canUseAi) return;
     if (!activeFridge) {
       setAiError("Najpierw wybierz aktywną lodówkę.");
       return;
@@ -225,7 +227,7 @@ export default function PlanMealsScreen() {
       const generatorPath = includeFridgeContents
         ? "generate-from-recipes-with-fridge"
         : "generate-from-recipes";
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/ai/meal-plans/${generatorPath}`,
         {
           method: "POST",
@@ -302,7 +304,7 @@ export default function PlanMealsScreen() {
 
     for (const slot of pendingSlots) {
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals`,
           {
             method: "POST",
@@ -340,7 +342,7 @@ export default function PlanMealsScreen() {
 
     if (reservationIds.length) {
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals/reserve`,
           {
             method: "POST",
@@ -799,14 +801,15 @@ export default function PlanMealsScreen() {
                 <Text style={styles.errorText}>{aiError}</Text>
               </View>
             ) : null}
+            <AiBudgetNotice />
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Generuj plan posiłków"
-              disabled={generating}
+              disabled={generating || !canUseAi}
               onPress={handleGenerate}
               style={({ pressed }) => [
                 styles.generateButton,
-                generating && styles.submitDisabled,
+                (generating || !canUseAi) && styles.submitDisabled,
                 pressed && !generating && styles.submitPressed,
               ]}
             >

@@ -7,6 +7,8 @@ node_modules/
 .expo/
 dist/
 web-build/
+test-results/
+playwright-report/
 expo-env.d.ts
 
 # Native
@@ -42,4 +44,3 @@ yarn-error.*
 
 # misc
 .VSCodeCouter/
-

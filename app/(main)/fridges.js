@@ -49,7 +49,7 @@ function FridgeGlyph() {
 export default function FridgeListScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { token, activeFridge, setActiveFridge } = useAuth();
+  const { apiFetch, sessionId, activeFridge, setActiveFridge } = useAuth();
   const [fridges, setFridges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,16 +62,16 @@ export default function FridgeListScreen() {
   const authHeaders = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadFridges = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     setListError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/fridges`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/fridges`, {
         method: "GET",
         headers: authHeaders,
       });
@@ -111,7 +111,7 @@ export default function FridgeListScreen() {
     setSaving(true);
     setModalError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/fridges`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/fridges`, {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({ name: newName.trim() }),

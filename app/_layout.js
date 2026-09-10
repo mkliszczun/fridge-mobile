@@ -5,7 +5,7 @@ import { View, ActivityIndicator } from "react-native";
 import { AuthProvider, useAuth } from "../context/AuthContext";
 
 function RootNavigator() {
-  const { token, loading } = useAuth();
+  const { sessionId, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -14,22 +14,22 @@ function RootNavigator() {
 
     const inAuthGroup = segments[0] === "(auth)";
 
-    if (!token && !inAuthGroup) {
+    if (!sessionId && !inAuthGroup) {
       router.replace("/login");
-    } else if (token && inAuthGroup) {
+    } else if (sessionId && inAuthGroup) {
       router.replace("/");
     }
-  }, [token, loading, segments, router]);
+  }, [sessionId, loading, segments, router]);
 
   if (loading) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator size="large" color="#1F6FEB" />
+        <ActivityIndicator size="large" color="#304B54" />
       </View>
     );
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return <Stack key={sessionId || "guest"} screenOptions={{ headerShown: false }} />;
 }
 
 export default function RootLayout() {

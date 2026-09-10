@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import {
   Modal,
+  useWindowDimensions,
   Platform,
   Pressable,
   ScrollView,
@@ -72,9 +73,10 @@ function ScannerIcon() {
 }
 
 export default function HomeScreen() {
+  const { height } = useWindowDimensions();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { token, activeFridge, logout } = useAuth();
+  const { apiFetch, sessionId, activeFridge, logout, isAdmin } = useAuth();
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState(false);
@@ -92,11 +94,11 @@ export default function HomeScreen() {
     setSummaryLoading(true);
     setSummaryError(false);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/fridge-items/${activeFridge}`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/fridge-items/${activeFridge}`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
         },
       });
       const payload = await response.json().catch(() => null);
@@ -109,7 +111,7 @@ export default function HomeScreen() {
     } finally {
       setSummaryLoading(false);
     }
-  }, [activeFridge, token]);
+  }, [activeFridge, sessionId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -226,7 +228,8 @@ export default function HomeScreen() {
       >
         <View style={styles.modalRoot}>
           <Pressable style={styles.modalBackdrop} onPress={() => setSettingsVisible(false)} />
-          <View style={[styles.settingsSheet, { marginTop: insets.top + 68 }]}>
+          <View style={[styles.settingsSheet, { marginTop: insets.top + 68, maxHeight: height - insets.top - insets.bottom - 88 }]}>
+            <ScrollView>
             <View style={styles.settingsHeader}>
               <Text style={styles.settingsTitle}>Ustawienia</Text>
               <Pressable
@@ -253,7 +256,18 @@ export default function HomeScreen() {
               <Text style={styles.settingsChevron}>›</Text>
             </Pressable>
 
-            <Pressable
+            <Pressable accessibilityRole="button" accessibilityLabel="Twoje konto" style={styles.settingsRow} onPress={() => navigateFromSettings("/account")}>
+              <Text style={styles.settingsRowIcon}>◉</Text><View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Twoje konto</Text><Text style={styles.settingsRowSubtitle}>Premium, limit AI i bezpieczeństwo</Text>
+              </View><Text style={styles.settingsChevron}>›</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Katalog produktów" style={styles.settingsRow} onPress={() => navigateFromSettings("/products")}>
+              <Text style={styles.settingsRowIcon}>▧</Text><View style={styles.settingsRowCopy}>
+                <Text style={styles.settingsRowTitle}>Katalog produktów</Text><Text style={styles.settingsRowSubtitle}>Przeglądaj i dodawaj produkty</Text>
+              </View><Text style={styles.settingsChevron}>›</Text>
+            </Pressable>
+
+            {isAdmin && <Pressable
               accessibilityRole="button"
               accessibilityLabel="Panel administratora"
               style={styles.settingsRow}
@@ -265,7 +279,7 @@ export default function HomeScreen() {
                 <Text style={styles.settingsRowSubtitle}>Produkty i domyślne terminy</Text>
               </View>
               <Text style={styles.settingsChevron}>›</Text>
-            </Pressable>
+            </Pressable>}
 
             <Pressable
               accessibilityRole="button"
@@ -276,6 +290,7 @@ export default function HomeScreen() {
               <Text style={[styles.settingsRowIcon, styles.logoutText]}>↪</Text>
               <Text style={[styles.settingsRowTitle, styles.logoutText]}>Wyloguj się</Text>
             </Pressable>
+            </ScrollView>
           </View>
         </View>
       </Modal>
