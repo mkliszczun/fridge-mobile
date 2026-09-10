@@ -79,7 +79,10 @@ export function createSessionClient({ baseUrl, storage, fetchImpl = (...args) =>
     signal?.addEventListener("abort", cancel, { once: true });
     const timer = setTimeout(cancel, timeoutMs);
     try {
-      return await fetchImpl(`${base}${path}`, { ...init, credentials: "omit", signal: controller.signal });
+      const response = await fetchImpl(`${base}${path}`, { ...init, credentials: "omit", signal: controller.signal });
+      // Keep the deadline active through body download, not only response headers.
+      const body = await response.text();
+      return new Response(body || null, { status: response.status, statusText: response.statusText, headers: response.headers });
     } catch (error) {
       if (signal?.aborted) throw error;
       throw new ApiError(controller.signal.aborted

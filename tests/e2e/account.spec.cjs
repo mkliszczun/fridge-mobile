@@ -21,8 +21,8 @@ async function mockApi(page, { roles = ['USER'], premium = false, remaining = .7
 }
 async function login(page) {
   await page.goto('/');
-  await page.getByLabel('E-mail', { exact: true }).fill('test@example.com');
-  await page.getByLabel('Hasło', { exact: true }).fill('password1');
+  await page.getByLabel('E-mail', { exact: true }).filter({ visible: true }).fill('test@example.com');
+  await page.getByLabel('Hasło', { exact: true }).filter({ visible: true }).fill('password1');
   await page.getByRole('button', { name: 'Zaloguj się', exact: true }).click();
   await expect(page.getByText('Kuchnia', { exact: true })).toBeVisible();
 }
@@ -37,13 +37,13 @@ test('login and registration keep the kitchen style; registration signs in', asy
   await expect(page.getByText('Dobrze Cię widzieć')).toBeVisible();
   await page.screenshot({ path: info.outputPath('login.png'), fullPage: true });
   await page.getByRole('link', { name: 'Załóż konto', exact: true }).click();
-  await page.getByLabel('E-mail', { exact: true }).fill('test@example.com');
-  await page.getByLabel('Hasło', { exact: true }).fill('password1');
-  await page.getByLabel('Powtórz hasło', { exact: true }).fill('different');
+  await page.getByLabel('E-mail', { exact: true }).filter({ visible: true }).fill('test@example.com');
+  await page.getByLabel('Hasło', { exact: true }).filter({ visible: true }).fill('password1');
+  await page.getByLabel('Powtórz hasło', { exact: true }).filter({ visible: true }).fill('different');
   await page.getByRole('button', { name: 'Załóż konto', exact: true }).click();
   await expect(page.getByText('Hasła muszą być takie same.')).toBeVisible();
   expect(calls.some(c => c.path === '/auth/register')).toBe(false);
-  await page.getByLabel('Powtórz hasło', { exact: true }).fill('password1');
+  await page.getByLabel('Powtórz hasło', { exact: true }).filter({ visible: true }).fill('password1');
   await page.screenshot({ path: info.outputPath('register.png'), fullPage: true });
   await page.getByRole('button', { name: 'Załóż konto', exact: true }).click();
   await expect(page.getByText('Kuchnia', { exact: true })).toBeVisible();
@@ -56,7 +56,7 @@ test('forgot password shows the same confirmation without revealing account exis
   const { calls, errors } = await mockApi(page);
   await page.goto('/');
   await page.getByRole('link', { name: 'Nie pamiętasz hasła?' }).click();
-  await page.getByLabel('E-mail', { exact: true }).fill('test@example.com');
+  await page.getByLabel('E-mail', { exact: true }).filter({ visible: true }).fill('test@example.com');
   await page.getByRole('button', { name: 'Wyślij link', exact: true }).click();
   await expect(page.getByText(/Jeśli konto z tym adresem istnieje/)).toBeVisible();
   await page.screenshot({ path: info.outputPath('forgot.png'), fullPage: true });
@@ -86,11 +86,11 @@ test('premium, exhausted AI allowance and password-confirmed account deletion', 
   await expect(page.getByText('Dzienny limit AI został wykorzystany', { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath('account.png'), fullPage: true });
   await page.getByRole('button', { name: 'Usuń konto…', exact: true }).click();
-  await page.getByLabel('Potwierdź aktualnym hasłem', { exact: true }).fill('wrong');
+  await page.getByLabel('Potwierdź aktualnym hasłem', { exact: true }).filter({ visible: true }).fill('wrong');
   await page.getByRole('button', { name: 'Potwierdzam — usuń moje konto', exact: true }).click();
   await expect(page.getByText(/Konto nie zostało usunięte/)).toBeVisible();
   expect(calls.filter(c => c.path === '/auth/refresh')).toHaveLength(0);
-  await page.getByLabel('Potwierdź aktualnym hasłem', { exact: true }).fill('correct-password');
+  await page.getByLabel('Potwierdź aktualnym hasłem', { exact: true }).filter({ visible: true }).fill('correct-password');
   await page.getByRole('button', { name: 'Potwierdzam — usuń moje konto', exact: true }).click();
   await expect(page.getByText('Dobrze Cię widzieć')).toBeVisible();
   expect(calls.filter(c => c.method === 'DELETE')).toHaveLength(2);

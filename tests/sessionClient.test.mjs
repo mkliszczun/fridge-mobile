@@ -82,6 +82,16 @@ test('ambiguous network failure during AI generation is not retried', async () =
   assert.equal(h.calls.length, 2); assert.ok(h.client.getSession());
 });
 
+test('request deadline also covers a stalled response body', async () => {
+  const h = setup((path, options) => {
+    if (path === '/auth/login') return json(pair());
+    return { text: () => new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })) };
+  });
+  await h.client.login('test@example.com', 'password1');
+  await assert.rejects(h.client.request('/api/me', { timeoutMs: 10 }), /nie odpowiedział na czas/);
+  assert.equal(h.calls.length, 2); assert.ok(h.client.getSession());
+});
+
 test('an interrupted refresh clears credentials instead of replaying a possibly used token', async () => {
   const h = setup(path => { if (path === '/auth/login') return json(pair('a', now / 1000 - 1)); throw new TypeError('offline'); });
   await h.client.login('test@example.com', 'password1');

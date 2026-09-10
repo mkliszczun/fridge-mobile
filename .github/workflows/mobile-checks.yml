@@ -2,7 +2,7 @@ name: Mobile checks
 on:
   pull_request:
   push:
-    branches: [main, codex/mobile-account-integration]
+    branches: [main]
 permissions:
   contents: read
 jobs:
