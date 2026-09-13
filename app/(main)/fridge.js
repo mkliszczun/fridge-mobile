@@ -141,7 +141,7 @@ function ProductGlyph() {
 
 export default function FridgeScreen() {
   const router = useRouter();
-  const { token, activeFridge } = useAuth();
+  const { apiFetch, sessionId, activeFridge } = useAuth();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -160,9 +160,9 @@ export default function FridgeScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const sortedItems = useMemo(() => (
@@ -187,7 +187,7 @@ export default function FridgeScreen() {
     if (showRefreshing) setRefreshing(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/fridge-items/${activeFridge}`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/fridge-items/${activeFridge}`, {
         method: "GET",
         headers,
       });
@@ -221,7 +221,7 @@ export default function FridgeScreen() {
       }
 
       try {
-        const res = await fetch(`${API_BASE_URL}/api/fridge-items/${itemId}/discard`, {
+        const res = await apiFetch(`${API_BASE_URL}/api/fridge-items/${itemId}/discard`, {
           method: "POST",
           headers,
         });
@@ -264,7 +264,7 @@ export default function FridgeScreen() {
           ? `${API_BASE_URL}/api/fridge-items/${itemId}/consume`
           : `${API_BASE_URL}/api/fridge-items/${itemId}/use`;
 
-        const res = await fetch(endpoint, {
+        const res = await apiFetch(endpoint, {
           method: "POST",
           headers,
           ...(!consumeAll ? { body: JSON.stringify({ amountUsed: amount }) } : {}),
@@ -376,7 +376,7 @@ export default function FridgeScreen() {
 
     setEditSubmitting(true);
     try {
-      const amountResponse = await fetch(`${API_BASE_URL}/api/fridge-items/${itemId}/amount`, {
+      const amountResponse = await apiFetch(`${API_BASE_URL}/api/fridge-items/${itemId}/amount`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({ amount }),
@@ -386,7 +386,7 @@ export default function FridgeScreen() {
         throw new Error(amountPayload?.message || `HTTP ${amountResponse.status}`);
       }
 
-      const dateResponse = await fetch(`${API_BASE_URL}/api/fridge-items/${itemId}/best-before-date`, {
+      const dateResponse = await apiFetch(`${API_BASE_URL}/api/fridge-items/${itemId}/best-before-date`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({ bestBeforeDate }),

@@ -23,7 +23,7 @@ import { useAuth } from "../../context/AuthContext";
 export default function AddProductScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { token } = useAuth();
+  const { apiFetch, sessionId } = useAuth();
   const [form, setForm] = useState({ name: "", ean: "", defaultUnit: "" });
   const [selectedType, setSelectedType] = useState(null);
   const [types, setTypes] = useState([]);
@@ -43,9 +43,9 @@ export default function AddProductScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const readParam = (value) => {
@@ -57,7 +57,7 @@ export default function AddProductScreen() {
     setTypesLoading(true);
     setTypesError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/product-types`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/product-types`, {
         method: "GET",
         headers,
       });
@@ -82,7 +82,7 @@ export default function AddProductScreen() {
     setUnitsLoading(true);
     setUnitsError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/units`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/units`, {
         method: "GET",
         headers,
       });
@@ -185,7 +185,7 @@ export default function AddProductScreen() {
 
     setSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/products`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/products`, {
         method: "POST",
         headers,
         body: JSON.stringify({

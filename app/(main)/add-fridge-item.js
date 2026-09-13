@@ -69,7 +69,7 @@ const resolveUnitValue = (selection) => {
 
 export default function AddFridgeItemScreen() {
   const router = useRouter();
-  const { token, activeFridge } = useAuth();
+  const { apiFetch, sessionId, activeFridge } = useAuth();
   const params = useLocalSearchParams();
 
   const readParam = (value) => {
@@ -98,16 +98,16 @@ export default function AddFridgeItemScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadProducts = useCallback(async () => {
     setProductsLoading(true);
     setProductsError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/products`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/products`, {
         method: "GET",
         headers,
       });
@@ -209,7 +209,7 @@ export default function AddFridgeItemScreen() {
         openDate: openDate || null,
       };
 
-      const res = await fetch(`${API_BASE_URL}/api/fridge-items`, {
+      const res = await apiFetch(`${API_BASE_URL}/api/fridge-items`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),

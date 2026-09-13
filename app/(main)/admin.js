@@ -1,3 +1,5 @@
+import { useAuth } from "../../context/AuthContext";
+import { Redirect } from "expo-router";
 import {
   Platform,
   Pressable,
@@ -78,7 +80,7 @@ function AdminCard({ eyebrow, title, subtitle, icon, onPress }) {
   );
 }
 
-export default function AdminScreen() {
+function AdminScreen() {
   const router = useRouter();
 
   return (
@@ -261,3 +263,8 @@ const iconStyles = StyleSheet.create({
   calendarDots: { position: "absolute", left: 7, right: 7, bottom: 7, flexDirection: "row", justifyContent: "space-between" },
   calendarDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: INK },
 });
+
+export default function AdminRoute() {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <AdminScreen /> : <Redirect href="/" />;
+}

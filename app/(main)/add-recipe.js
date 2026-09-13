@@ -1,3 +1,4 @@
+import AiBudgetNotice from "../../components/AiBudgetNotice";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -102,7 +103,7 @@ export default function AddRecipeScreen() {
     : params?.recipeId;
   const recipeId = recipeIdParam ? String(recipeIdParam) : null;
   const isEditing = Boolean(recipeId);
-  const { token } = useAuth();
+  const { canUseAi, apiFetch, sessionId } = useAuth();
   const nextIngredientKey = useRef(2);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -122,9 +123,9 @@ export default function AddRecipeScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function AddRecipeScreen() {
       setLoadingRecipe(true);
       setLoadError(null);
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/api/recipes/${encodeURIComponent(recipeId)}`,
           { method: "GET", headers }
         );
@@ -240,6 +241,7 @@ export default function AddRecipeScreen() {
   };
 
   const handleGenerate = async () => {
+    if (generating || !canUseAi) return;
     setAiError(null);
     const servingsNumber = Number(servings);
     if (!Number.isInteger(servingsNumber) || servingsNumber <= 0) {
@@ -257,7 +259,7 @@ export default function AddRecipeScreen() {
 
     setGenerating(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/ai/recipes/generate`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/ai/recipes/generate`, {
         method: "POST",
         headers,
         body: JSON.stringify({ servings: servingsNumber, guidelines }),
@@ -343,7 +345,7 @@ export default function AddRecipeScreen() {
 
     setSubmitting(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         isEditing
           ? `${API_BASE_URL}/api/recipes/${encodeURIComponent(recipeId)}`
           : `${API_BASE_URL}/api/recipes`,
@@ -708,14 +710,15 @@ export default function AddRecipeScreen() {
               </View>
             ) : null}
 
+            <AiBudgetNotice />
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Generuj i uzupełnij formularz"
               onPress={handleGenerate}
-              disabled={generating}
+              disabled={generating || !canUseAi}
               style={({ pressed }) => [
                 styles.generateButton,
-                generating && styles.submitDisabled,
+                (generating || !canUseAi) && styles.submitDisabled,
                 pressed && !generating && styles.submitPressed,
               ]}
             >

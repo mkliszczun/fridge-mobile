@@ -30,6 +30,15 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Pozwól aplikacji skanować kody produktów aparatem.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
       ]
     ],
     "extra": {
@@ -38,7 +47,7 @@
       }
     },
     "runtimeVersion": {
-      "policy": "sdkVersion"
+      "policy": "fingerprint"
     },
     "updates": {
       "url": "https://u.expo.dev/1a0aa125-b71a-4c11-8ab0-9660f14c6d6d"

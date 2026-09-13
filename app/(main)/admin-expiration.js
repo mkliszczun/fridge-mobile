@@ -1,3 +1,4 @@
+import { Redirect } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -82,9 +83,9 @@ function ExpirationGlyph() {
   );
 }
 
-export default function AdminExpirationScreen() {
+function AdminExpirationScreen() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { apiFetch, sessionId } = useAuth();
   const [rules, setRules] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -97,16 +98,16 @@ export default function AdminExpirationScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadRules = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/expiration`, {
+      const response = await apiFetch(`${API_BASE_URL}/admin/expiration`, {
         method: "GET",
         headers,
       });
@@ -168,7 +169,7 @@ export default function AdminExpirationScreen() {
     setSaving(true);
     setEditorError(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/admin/expiration/${path}?productType=${encodeURIComponent(editor.productType)}`,
         {
           method: "POST",
@@ -556,3 +557,8 @@ const glyphStyles = StyleSheet.create({
   clockHandVertical: { position: "absolute", left: 15, top: 16, width: 2.2, height: 8, borderRadius: 2, backgroundColor: "#173746" },
   clockHandHorizontal: { position: "absolute", left: 15, top: 22, width: 7, height: 2.2, borderRadius: 2, backgroundColor: "#173746" },
 });
+
+export default function AdminRoute() {
+  const { isAdmin } = useAuth();
+  return isAdmin ? <AdminExpirationScreen /> : <Redirect href="/" />;
+}

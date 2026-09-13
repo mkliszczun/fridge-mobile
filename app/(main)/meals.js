@@ -397,7 +397,7 @@ function SwipeableMealCard({
 
 export default function MealsScreen() {
   const router = useRouter();
-  const { token, activeFridge } = useAuth();
+  const { apiFetch, sessionId, activeFridge } = useAuth();
   const [meals, setMeals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -411,9 +411,9 @@ export default function MealsScreen() {
   const headers = useMemo(
     () => ({
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+
     }),
-    [token]
+    [sessionId]
   );
 
   const loadMeals = useCallback(async (showRefreshing = false) => {
@@ -428,7 +428,7 @@ export default function MealsScreen() {
     if (showRefreshing) setRefreshing(true);
     setError(null);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals`,
         { method: "GET", headers }
       );
@@ -450,7 +450,7 @@ export default function MealsScreen() {
       throw new Error("Brakuje danych zaplanowanego posiłku.");
     }
 
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals/${encodeURIComponent(meal.id)}`,
       { method: "DELETE", headers }
     );
@@ -499,7 +499,7 @@ export default function MealsScreen() {
     const mealId = String(meal.id);
     setMealActionId(mealId);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals/${encodeURIComponent(mealId)}/complete`,
         { method: "POST", headers }
       );
@@ -536,11 +536,11 @@ export default function MealsScreen() {
     try {
       const fridgePath = `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}`;
       const [mealResponse, itemsResponse] = await Promise.all([
-        fetch(`${fridgePath}/planned-meals/${encodeURIComponent(mealId)}`, {
+        apiFetch(`${fridgePath}/planned-meals/${encodeURIComponent(mealId)}`, {
           method: "GET",
           headers,
         }),
-        fetch(`${API_BASE_URL}/api/fridge-items/${encodeURIComponent(activeFridge)}`, {
+        apiFetch(`${API_BASE_URL}/api/fridge-items/${encodeURIComponent(activeFridge)}`, {
           method: "GET",
           headers,
         }),
