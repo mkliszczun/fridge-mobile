@@ -54,6 +54,164 @@ const formatServings = (count) => {
   return `${count} porcji`;
 };
 
+const numericAmount = (value) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizeUnit = (value) => {
+  const unit = String(value || "").trim().toLowerCase().replaceAll(".", "");
+  if (["g", "gram", "grams", "gramy", "gramów", "gramow"].includes(unit)) {
+    return { unit: "GRAM", multiplier: 1 };
+  }
+  if (["kg", "kilogram", "kilogramy", "kilogramów", "kilogramow"].includes(unit)) {
+    return { unit: "GRAM", multiplier: 1000 };
+  }
+  if ([
+    "ml",
+    "mililitr",
+    "mililitry",
+    "mililitrów",
+    "mililitrow",
+    "milliliter",
+    "milliliters",
+    "millilitre",
+    "millilitres",
+  ].includes(unit)) {
+    return { unit: "MILLILITER", multiplier: 1 };
+  }
+  if (["l", "litr", "litry", "litrów", "litrow"].includes(unit)) {
+    return { unit: "MILLILITER", multiplier: 1000 };
+  }
+  if (["szt", "sztuka", "sztuki", "sztuk", "piece"].includes(unit)) {
+    return { unit: "PIECE", multiplier: 1 };
+  }
+  return null;
+};
+
+const normalizedRequiredQuantity = (meal, ingredient) => {
+  if (ingredient?.amount == null || !ingredient?.unit) return null;
+
+  const amount = numericAmount(ingredient.amount);
+  const servings = numericAmount(meal?.servings);
+  const recipeServings = numericAmount(meal?.recipe?.servings);
+  const normalized = normalizeUnit(ingredient.unit);
+  if (!normalized || amount <= 0 || servings <= 0 || recipeServings <= 0) return null;
+
+  const scaledAmount = amount * servings / recipeServings * normalized.multiplier;
+  return {
+    amount: normalized.unit === "PIECE" ? Math.ceil(scaledAmount) : scaledAmount,
+    unit: normalized.unit,
+  };
+};
+
+const previewCompletionWarnings = (meal, fridgeItems) => {
+  const itemsById = new Map(
+    (Array.isArray(fridgeItems) ? fridgeItems : [])
+      .filter((item) => item?.id)
+      .map((item) => [String(item.id), item])
+  );
+  const remainingAmounts = new Map(
+    [...itemsById.entries()].map(([id, item]) => [id, Math.max(0, numericAmount(item.amount))])
+  );
+  const warnings = [];
+
+  (Array.isArray(meal?.recipe?.ingredients) ? meal.recipe.ingredients : []).forEach((ingredient) => {
+    const reservations = [...(Array.isArray(ingredient?.reservations)
+      ? ingredient.reservations
+      : [])].sort((left, right) => String(left?.id || "").localeCompare(String(right?.id || "")));
+    const consumedByUnit = new Map();
+    let consumedTotal = 0;
+
+    reservations.forEach((reservation) => {
+      const itemId = String(reservation?.fridgeItemId || "");
+      const item = itemsById.get(itemId);
+      const remaining = remainingAmounts.get(itemId) || 0;
+      const reserved = Math.max(0, numericAmount(reservation?.amount));
+      const consumed = Math.min(remaining, reserved);
+      if (!item || consumed <= 0) return;
+
+      remainingAmounts.set(itemId, remaining - consumed);
+      consumedTotal += consumed;
+      const normalizedItemUnit = normalizeUnit(item.unit);
+      if (normalizedItemUnit) {
+        consumedByUnit.set(
+          normalizedItemUnit.unit,
+          (consumedByUnit.get(normalizedItemUnit.unit) || 0) + consumed
+        );
+      }
+    });
+
+    if (ingredient?.optional) return;
+
+    const required = normalizedRequiredQuantity(meal, ingredient);
+    if (required) {
+      const consumed = consumedByUnit.get(required.unit) || 0;
+      const missing = Math.max(0, required.amount - consumed);
+      if (missing > 0.000001) {
+        warnings.push({
+          code: "MISSING_AMOUNT",
+          ingredientName: ingredient?.name || "Składnik",
+          missingAmount: missing,
+          unit: required.unit,
+        });
+      }
+      return;
+    }
+
+    const reservedTotal = reservations.reduce(
+      (sum, reservation) => sum + Math.max(0, numericAmount(reservation?.amount)),
+      0
+    );
+    if (reservedTotal <= 0.000001) {
+      warnings.push({
+        code: "UNRESERVED_INGREDIENT",
+        ingredientName: ingredient?.name || "Składnik",
+        missingAmount: null,
+        unit: ingredient?.unit || null,
+      });
+    } else if (consumedTotal + 0.000001 < reservedTotal) {
+      warnings.push({
+        code: "RESERVED_ITEM_UNAVAILABLE",
+        ingredientName: ingredient?.name || "Składnik",
+        missingAmount: reservedTotal - consumedTotal,
+        unit: ingredient?.unit || null,
+      });
+    }
+  });
+
+  return warnings;
+};
+
+const formatWarningAmount = (amount, unit) => {
+  if (amount == null) return null;
+  const rounded = Math.round(numericAmount(amount) * 100) / 100;
+  const amountLabel = rounded.toLocaleString("pl-PL", { maximumFractionDigits: 2 });
+  const unitLabel = {
+    GRAM: "g",
+    MILLILITER: "ml",
+    PIECE: "szt.",
+  }[String(unit || "").toUpperCase()] || unit || "";
+  return `${amountLabel}${unitLabel ? ` ${unitLabel}` : ""}`;
+};
+
+const formatWarnings = (warnings) => {
+  const visibleWarnings = warnings.slice(0, 6).map((warning) => {
+    const amount = formatWarningAmount(warning?.missingAmount, warning?.unit);
+    if (warning?.code === "UNRESERVED_INGREDIENT") {
+      return `• ${warning?.ingredientName || "Składnik"}: brak zarezerwowanego produktu`;
+    }
+    if (warning?.code === "RESERVED_ITEM_UNAVAILABLE" && !amount) {
+      return `• ${warning?.ingredientName || "Składnik"}: produkt jest niedostępny`;
+    }
+    return `• ${warning?.ingredientName || "Składnik"}${amount ? `: brakuje ${amount}` : ": brak produktu"}`;
+  });
+  if (warnings.length > visibleWarnings.length) {
+    visibleWarnings.push(`• oraz ${warnings.length - visibleWarnings.length} więcej`);
+  }
+  return visibleWarnings.join("\n");
+};
+
 function MealGlyph() {
   return (
     <View style={glyphStyles.wrap}>
@@ -70,6 +228,7 @@ function MealGlyph() {
 
 function SwipeableMealCard({
   item,
+  busy,
   onLongPress,
   onDelete,
   onDeleteError,
@@ -95,7 +254,7 @@ function SwipeableMealCard({
   }, [translateX]);
 
   const deleteFromSwipe = useCallback(() => {
-    if (deleting.current) return;
+    if (busy || deleting.current) return;
     deleting.current = true;
     setDeletingVisible(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
@@ -110,11 +269,12 @@ function SwipeableMealCard({
         onDeleteError(error);
       }
     });
-  }, [animateTo, item, onDelete, onDeleteError]);
+  }, [animateTo, busy, item, onDelete, onDeleteError]);
 
   const panResponder = useMemo(() => {
     const shouldStartHorizontalSwipe = (_, gesture) => (
-      Math.abs(gesture.dx) > 8
+      !busy
+      && Math.abs(gesture.dx) > 8
       && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.15
       && (gesture.dx < 0 || settledX.current < 0)
     );
@@ -153,7 +313,7 @@ function SwipeableMealCard({
       },
       onShouldBlockNativeResponder: () => true,
     });
-  }, [animateTo, deleteFromSwipe, onSwipeEnd, onSwipeStart, translateX]);
+  }, [animateTo, busy, deleteFromSwipe, onSwipeEnd, onSwipeStart, translateX]);
 
   const handleLongPress = () => {
     animateTo(0);
@@ -171,7 +331,8 @@ function SwipeableMealCard({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Usuń posiłek ${item?.recipe?.name || "bez nazwy"}`}
-          disabled={deletingVisible}
+          accessibilityState={{ disabled: deletingVisible || busy }}
+          disabled={deletingVisible || busy}
           onPress={deleteFromSwipe}
           style={({ pressed }) => [styles.deleteAction, pressed && styles.deleteActionPressed]}
         >
@@ -187,12 +348,20 @@ function SwipeableMealCard({
 
         <Animated.View
           {...panResponder.panHandlers}
-          style={[styles.swipeForeground, { transform: [{ translateX }] }]}
+          style={[
+            styles.swipeForeground,
+            busy && styles.cardBusy,
+            { transform: [{ translateX }] },
+          ]}
         >
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Opcje posiłku ${item?.recipe?.name || "bez nazwy"}`}
-            accessibilityHint="Przytrzymaj, aby otworzyć menu, albo przesuń w lewo, aby usunąć"
+            accessibilityHint={busy
+              ? "Trwa aktualizowanie posiłku"
+              : "Przytrzymaj, aby otworzyć menu, albo przesuń w lewo, aby usunąć"}
+            accessibilityState={{ disabled: busy }}
+            disabled={busy}
             delayLongPress={450}
             onLongPress={handleLongPress}
           >
@@ -203,7 +372,7 @@ function SwipeableMealCard({
               style={styles.card}
             >
               <View style={styles.iconBadge}>
-                <MealGlyph />
+                {busy ? <ActivityIndicator size="small" color="#304B54" /> : <MealGlyph />}
               </View>
               <View style={styles.cardCopy}>
                 <Text style={styles.cardEyebrow}>
@@ -234,6 +403,7 @@ export default function MealsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [horizontalSwipeActive, setHorizontalSwipeActive] = useState(false);
+  const [mealActionId, setMealActionId] = useState(null);
 
   const startHorizontalSwipe = useCallback(() => setHorizontalSwipeActive(true), []);
   const endHorizontalSwipe = useCallback(() => setHorizontalSwipeActive(false), []);
@@ -320,21 +490,131 @@ export default function MealsScreen() {
     );
   }, [deleteMeal, showDeleteError]);
 
+  const completeMeal = useCallback(async (meal) => {
+    if (!activeFridge || !meal?.id) {
+      Alert.alert("Nie udało się zrobić posiłku", "Brakuje danych zaplanowanego posiłku.");
+      return;
+    }
+
+    const mealId = String(meal.id);
+    setMealActionId(mealId);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}/planned-meals/${encodeURIComponent(mealId)}/complete`,
+        { method: "POST", headers }
+      );
+      const payload = await readPayload(response);
+      if (!response.ok) {
+        throw new Error(payload?.message || `HTTP ${response.status}`);
+      }
+
+      setMeals((current) => current.filter((item) => String(item?.id) !== mealId));
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+      const warnings = Array.isArray(payload?.warnings) ? payload.warnings : [];
+      Alert.alert(
+        "Posiłek zrobiony",
+        warnings.length
+          ? `Zużyto dostępne produkty. Nadal brakowało:\n\n${formatWarnings(warnings)}`
+          : "Zużyte produkty zostały odjęte od zapasów."
+      );
+    } catch (actionError) {
+      Alert.alert(
+        "Nie udało się zrobić posiłku",
+        actionError?.message || "Spróbuj ponownie za chwilę."
+      );
+    } finally {
+      setMealActionId(null);
+    }
+  }, [activeFridge, headers]);
+
+  const requestMealCompletion = useCallback(async (meal) => {
+    if (!activeFridge || !meal?.id || mealActionId) return;
+
+    const mealId = String(meal.id);
+    setMealActionId(mealId);
+    try {
+      const fridgePath = `${API_BASE_URL}/api/fridges/${encodeURIComponent(activeFridge)}`;
+      const [mealResponse, itemsResponse] = await Promise.all([
+        fetch(`${fridgePath}/planned-meals/${encodeURIComponent(mealId)}`, {
+          method: "GET",
+          headers,
+        }),
+        fetch(`${API_BASE_URL}/api/fridge-items/${encodeURIComponent(activeFridge)}`, {
+          method: "GET",
+          headers,
+        }),
+      ]);
+      const [freshMeal, fridgeItems] = await Promise.all([
+        readPayload(mealResponse),
+        readPayload(itemsResponse),
+      ]);
+      if (!mealResponse.ok) {
+        throw new Error(freshMeal?.message || `HTTP ${mealResponse.status}`);
+      }
+      if (!itemsResponse.ok || !Array.isArray(fridgeItems)) {
+        throw new Error(fridgeItems?.message || `HTTP ${itemsResponse.status}`);
+      }
+
+      const warnings = previewCompletionWarnings(freshMeal, fridgeItems);
+      setMealActionId(null);
+      if (warnings.length) {
+        Alert.alert(
+          "Brakuje składników",
+          `${formatWarnings(warnings)}\n\nMożesz mimo to zrobić posiłek. Zużyjemy tylko dostępne produkty.`,
+          [
+            { text: "Anuluj", style: "cancel" },
+            {
+              text: "Zrób mimo braków",
+              style: "destructive",
+              onPress: () => completeMeal(freshMeal),
+            },
+          ]
+        );
+        return;
+      }
+
+      await completeMeal(freshMeal);
+    } catch (previewError) {
+      setMealActionId(null);
+      Alert.alert(
+        "Nie udało się sprawdzić zapasów",
+        `${previewError?.message || "Spróbuj ponownie za chwilę."}\n\nCzy mimo to zrobić posiłek?`,
+        [
+          { text: "Anuluj", style: "cancel" },
+          {
+            text: "Zrób mimo to",
+            style: "destructive",
+            onPress: () => completeMeal(meal),
+          },
+        ]
+      );
+    }
+  }, [activeFridge, completeMeal, headers, mealActionId]);
+
   const openMealMenu = useCallback((meal) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const actionInProgress = Boolean(mealActionId);
     showContextMenu({
       title: meal?.recipe?.name || "Posiłek bez nazwy",
       message: formatMealDate(meal?.plannedDate),
       actions: [
         {
+          id: "complete",
+          label: actionInProgress ? "Sprawdzam zapasy..." : "Zrób posiłek",
+          disabled: actionInProgress,
+          onPress: () => requestMealCompletion(meal),
+        },
+        {
           id: "delete",
           label: "Usuń",
           role: "destructive",
+          disabled: actionInProgress,
           onPress: () => confirmDeleteMeal(meal),
         },
       ],
     });
-  }, [confirmDeleteMeal]);
+  }, [confirmDeleteMeal, mealActionId, requestMealCompletion]);
 
   useFocusEffect(
     useCallback(() => {
@@ -454,6 +734,7 @@ export default function MealsScreen() {
               renderItem={({ item }) => (
                 <SwipeableMealCard
                   item={item}
+                  busy={String(mealActionId || "") === String(item?.id || "")}
                   onLongPress={openMealMenu}
                   onDelete={deleteMeal}
                   onDeleteError={showDeleteError}
@@ -529,6 +810,7 @@ const styles = StyleSheet.create({
   swipeShell: { borderRadius: 25, marginBottom: 4, shadowColor: "#173746", shadowOpacity: 0.10, shadowRadius: 14, shadowOffset: { width: 0, height: 8 }, elevation: 3 },
   swipeContainer: { borderRadius: 25, overflow: "hidden", backgroundColor: "#B4473E" },
   swipeForeground: { backgroundColor: "#F7F7F1" },
+  cardBusy: { opacity: 0.62 },
   deleteAction: { position: "absolute", top: 0, right: 0, bottom: 0, width: DELETE_ACTION_WIDTH, alignItems: "center", justifyContent: "center", gap: 2, backgroundColor: "#B4473E" },
   deleteActionPressed: { backgroundColor: "#9F382F" },
   deleteActionIcon: { color: "#FFFFFF", fontSize: 25, lineHeight: 26, fontWeight: "400" },

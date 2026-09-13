@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -16,7 +16,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
@@ -205,9 +205,11 @@ export default function FridgeScreen() {
     }
   }, [headers, activeFridge]);
 
-  useEffect(() => {
-    loadItems();
-  }, [loadItems]);
+  useFocusEffect(
+    useCallback(() => {
+      loadItems();
+    }, [loadItems])
+  );
 
   const discardItem = useCallback(
     async (item) => {
