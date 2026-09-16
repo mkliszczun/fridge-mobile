@@ -723,7 +723,7 @@ export default function PlanMealsScreen() {
           style={styles.modalRoot}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
-          <Pressable style={styles.modalBackdrop} onPress={closeAi} />
+          <View style={styles.modalBackdrop} />
           <View style={styles.aiSheet}>
             <View style={styles.modalHandle} />
             <View style={styles.modalHeader}>
@@ -802,29 +802,44 @@ export default function PlanMealsScreen() {
               </View>
             ) : null}
             <AiBudgetNotice />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Generuj plan posiłków"
-              disabled={generating || !canUseAi}
-              onPress={handleGenerate}
-              style={({ pressed }) => [
-                styles.generateButton,
-                (generating || !canUseAi) && styles.submitDisabled,
-                pressed && !generating && styles.submitPressed,
-              ]}
-            >
-              {generating ? (
-                <>
-                  <ActivityIndicator color="#FFFFFF" />
-                  <Text style={styles.generateText}>AI układa plan...</Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.generateSparkle}>✦</Text>
-                  <Text style={styles.generateText}>Uzupełnij plan</Text>
-                </>
-              )}
-            </Pressable>
+            <View style={styles.aiActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Anuluj planowanie z pomocą AI"
+                disabled={generating}
+                onPress={closeAi}
+                style={({ pressed }) => [
+                  styles.cancelAiButton,
+                  generating && styles.submitDisabled,
+                  pressed && !generating && styles.cancelAiButtonPressed,
+                ]}
+              >
+                <Text style={styles.cancelAiButtonText}>Anuluj</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Generuj plan posiłków"
+                disabled={generating || !canUseAi}
+                onPress={handleGenerate}
+                style={({ pressed }) => [
+                  styles.generateButton,
+                  (generating || !canUseAi) && styles.submitDisabled,
+                  pressed && !generating && styles.submitPressed,
+                ]}
+              >
+                {generating ? (
+                  <>
+                    <ActivityIndicator color="#FFFFFF" />
+                    <Text style={styles.generateText}>AI układa plan...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.generateSparkle}>✦</Text>
+                    <Text style={styles.generateText}>Uzupełnij plan</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -938,7 +953,11 @@ const styles = StyleSheet.create({
   aiInput: { minHeight: 118, maxHeight: 180, borderRadius: 17, borderWidth: 1, borderColor: "rgba(73,102,108,0.14)", backgroundColor: "rgba(255,255,255,0.76)", paddingHorizontal: 15, paddingVertical: 13, marginTop: 13, color: "#182326", fontSize: 15, lineHeight: 21 },
   aiCounter: { alignSelf: "flex-end", color: "#98A3A2", fontSize: 10, marginTop: 5 },
   aiErrorBanner: { flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: "rgba(255,247,244,0.92)", borderWidth: 1, borderColor: "rgba(164,73,62,0.12)", borderRadius: 15, padding: 12, marginTop: 10 },
-  generateButton: { minHeight: 56, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 18, paddingHorizontal: 18, paddingVertical: 15, marginTop: 13, backgroundColor: "#4F6B72", shadowColor: "#19343D", shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
+  aiActions: { flexDirection: "row", alignItems: "stretch", gap: 10, marginTop: 13 },
+  cancelAiButton: { minWidth: 96, minHeight: 56, alignItems: "center", justifyContent: "center", borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15, backgroundColor: "rgba(225,234,231,0.82)", borderWidth: 1, borderColor: "rgba(73,102,108,0.12)" },
+  cancelAiButtonPressed: { backgroundColor: "rgba(213,225,221,0.96)", transform: [{ scale: 0.985 }] },
+  cancelAiButtonText: { color: "#425F66", fontSize: 15, fontWeight: "800" },
+  generateButton: { flex: 1, minHeight: 56, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 9, borderRadius: 18, paddingHorizontal: 18, paddingVertical: 15, backgroundColor: "#4F6B72", shadowColor: "#19343D", shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 4 },
   generateSparkle: { color: "#F3DCAC", fontSize: 21 },
   generateText: { color: "#FFFFFF", fontSize: 16, fontWeight: "800" },
 });
