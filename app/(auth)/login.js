@@ -31,7 +31,7 @@ export default function LoginScreen() {
   const handleSubmit = async () => {
     if (pending.current) return;
     if (!form.login || !form.password) {
-      setError("Podaj e-mail i hasło");
+      setError("Podaj e-mail lub login oraz hasło");
       return;
     }
     pending.current = true;
@@ -84,12 +84,12 @@ export default function LoginScreen() {
               style={styles.card}
             >
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>E-mail</Text>
+                <Text style={styles.label}>E-mail lub login</Text>
                 <TextInput
-                  accessibilityLabel="E-mail"
-                  placeholder="twoj@email.pl"
+                  accessibilityLabel="E-mail lub login"
+                  placeholder="E-mail lub dotychczasowy login"
                   keyboardType="email-address"
-                  maxLength={64}
+                  maxLength={254}
                   placeholderTextColor="#98A2A3"
                   autoCapitalize="none"
                   autoCorrect={false}

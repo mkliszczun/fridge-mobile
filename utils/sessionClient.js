@@ -25,33 +25,60 @@ export function retryTime(header, now = Date.now()) {
   return tomorrow.getTime();
 }
 
-export async function responseError(response, action = "request") {
+export async function responseError(response, action = "request", time = Date.now()) {
   const payload = await response.clone().json().catch(() => null);
+  const verifying = action === "email-send" || action === "email-verify";
+  const authAction = verifying || ["login", "register", "forgot"].includes(action);
+  const processExpired = verifying && (response.status === 401 || (response.status === 400
+    && typeof payload?.error === "string" && payload.error.includes("Invalid or expired verification process")));
   const messages = {
     400: "Sprawdź wprowadzone dane i spróbuj ponownie.",
     401: action === "delete" ? "Nieprawidłowe hasło lub wygasła sesja. Konto nie zostało usunięte."
-      : action === "login" ? "Nieprawidłowy e-mail lub hasło." : "Sesja wygasła. Zaloguj się ponownie.",
+      : action === "login" ? "Nieprawidłowy e-mail, login lub hasło." : "Sesja wygasła. Zaloguj się ponownie.",
     403: "Nie masz uprawnień do tej operacji.",
     409: action === "register" ? "Konto z tym adresem e-mail już istnieje. Zaloguj się lub odzyskaj hasło."
       : "Nie można wykonać tej operacji — dane są już używane lub zostały zmienione.",
     413: "Za dużo danych dla jednego zapytania AI. Zmniejsz zakres i spróbuj ponownie.",
-    429: "Dzisiejszy limit AI został wykorzystany. Spróbuj ponownie po odnowieniu limitu.",
+    429: authAction ? "Zbyt wiele prób. Poczekaj przed kolejną próbą."
+      : "Dzisiejszy limit AI został wykorzystany. Spróbuj ponownie po odnowieniu limitu.",
   };
+  if (verifying) {
+    messages[400] = action === "email-verify" ? "Kod jest nieprawidłowy lub wygasł. Sprawdź go albo wyślij nowy."
+      : "Sprawdź adres e-mail i spróbuj ponownie.";
+    messages[409] = "Ten adres jest już używany przez inne konto. Podaj inny adres lub wróć do logowania.";
+    messages[503] = action === "email-send" ? "Nie udało się wysłać kodu. Spróbuj ponownie za chwilę."
+      : "Nie udało się potwierdzić adresu. Spróbuj ponownie za chwilę.";
+  }
+  if (processExpired) return new ApiError("Potwierdzenie utraciło ważność. Rozpocznij ponownie.", response.status,
+    { verificationExpired: true });
   return new ApiError(messages[response.status] || (response.status >= 500
     ? "Serwer jest chwilowo niedostępny. Spróbuj ponownie za chwilę."
     : payload?.message || payload?.error || "Nie udało się wykonać operacji."), response.status,
-  response.status === 429 ? { resetsAt: retryTime(response.headers.get("Retry-After")) } : {});
+  response.status === 429 ? { resetsAt: authAction && !response.headers.get("Retry-After")
+    ? time + 60000 : retryTime(response.headers.get("Retry-After"), time) } : {});
 }
 
 export function createSessionClient({ baseUrl, storage, fetchImpl = (...args) => fetch(...args),
-  onChange = () => {}, onExpired = () => {}, now = () => Date.now() }) {
+  onChange = () => {}, onExpired = () => {}, onVerificationChange = () => {}, now = () => Date.now() }) {
   const base = baseUrl.replace(/\/+$/, "");
   let session = null;
   let generation = 0;
   let refreshFlight = null;
+  let verification = null;
+  let verificationFlight = null;
   let writes = Promise.resolve();
   const expired = () => new ApiError("Sesja wygasła. Zaloguj się ponownie.", 401);
   const check = (epoch) => { if (epoch !== generation) throw expired(); };
+  // A verification proof never becomes a session, a URL parameter or a persisted credential.
+  const getVerification = () => {
+    if (!verification) return null;
+    const { verificationToken, ...summary } = verification;
+    return summary;
+  };
+  const publishVerification = (value) => {
+    verification = value;
+    onVerificationChange(getVerification());
+  };
   const persist = (value, epoch) => {
     const operation = writes.catch(() => {}).then(async () => {
       check(epoch);
@@ -66,9 +93,12 @@ export function createSessionClient({ baseUrl, storage, fetchImpl = (...args) =>
     const epoch = ++generation;
     session = null;
     refreshFlight = null;
+    verificationFlight = null;
+    publishVerification(null);
     onChange(null);
     if (notify) onExpired();
     await persist(null, epoch);
+    return epoch;
   }
 
   async function send(path, options = {}) {
@@ -117,17 +147,98 @@ export function createSessionClient({ baseUrl, storage, fetchImpl = (...args) =>
   }
 
   async function authenticate(path, email, password) {
-    const epoch = ++generation;
+    const epoch = await clearLocal();
+    check(epoch);
     const response = await send(path, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ login: email, password }) });
     check(epoch);
-    if (!response.ok) throw await responseError(response, path.endsWith("register") ? "register" : "login");
-    const next = makeSession(await response.json(), email);
+    const mode = path.endsWith("register") ? "register" : "login";
+    if (!response.ok) throw await responseError(response, mode, now());
+    const payload = await response.json().catch(() => null);
+    check(epoch);
+    if (response.status === 202) {
+      const expiresAt = Date.parse(payload?.expiresAt);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(payload?.verificationToken || "") || !Number.isFinite(expiresAt)
+        || expiresAt <= now() || (payload.email !== null && typeof payload.email !== "string")
+        || typeof payload.emailRequired !== "boolean") {
+        throw new ApiError("Nie udało się rozpocząć potwierdzania adresu. Spróbuj ponownie.");
+      }
+      publishVerification({ verificationToken: payload.verificationToken, expiresAt, email: payload.email,
+        emailRequired: payload.emailRequired, mode, invalid: false, codeExpiresAt: null,
+        resendAvailableAt: 0, sendBlockedUntil: 0, verifyBlockedUntil: 0 });
+      return { verificationRequired: true };
+    }
+    const next = makeSession(payload, email);
     await persist(next, epoch);
     check(epoch);
     session = next;
     onChange(session);
     return session;
+  }
+
+  function requireVerification() {
+    if (!verification || verification.invalid || verification.expiresAt <= now()) {
+      if (verification) publishVerification({ ...verification, invalid: true });
+      throw new ApiError("Potwierdzenie utraciło ważność. Rozpocznij ponownie.", 400, { verificationExpired: true });
+    }
+    return verification;
+  }
+
+  async function verificationRequest(action, fields) {
+    const current = requireVerification();
+    if (verificationFlight) throw new ApiError("Poczekaj na zakończenie poprzedniej operacji.");
+    const blockedUntil = action === "email-send"
+      ? Math.max(current.resendAvailableAt, current.sendBlockedUntil) : current.verifyBlockedUntil;
+    if (blockedUntil > now()) throw new ApiError("Poczekaj przed kolejną próbą.", 429, { resetsAt: blockedUntil });
+    const flight = {};
+    verificationFlight = flight;
+    const epoch = generation;
+    const checkProcess = () => {
+      check(epoch);
+      if (verification?.verificationToken !== current.verificationToken) throw expired();
+    };
+    try {
+      const response = await send(action === "email-send" ? "/auth/email/send" : "/auth/email/verify",
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ verificationToken: current.verificationToken, ...fields }) });
+      checkProcess();
+      if (!response.ok) {
+        const error = await responseError(response, action, now());
+        checkProcess();
+        if (error.verificationExpired) publishVerification({ ...verification, invalid: true });
+        else if (error.status === 429) publishVerification({ ...verification,
+          [action === "email-send" ? "sendBlockedUntil" : "verifyBlockedUntil"]: error.resetsAt });
+        throw error;
+      }
+      const payload = await response.json().catch(() => null);
+      checkProcess();
+      if (action === "email-send") {
+        const codeExpiresAt = Date.parse(payload?.codeExpiresAt), resendAvailableAt = Date.parse(payload?.resendAvailableAt);
+        if (!Number.isFinite(codeExpiresAt) || !Number.isFinite(resendAvailableAt)) {
+          throw new ApiError("Nie udało się odczytać potwierdzenia wysyłki. Spróbuj ponownie za chwilę.");
+        }
+        publishVerification({ ...verification, email: fields.email || current.email, emailRequired: false,
+          codeExpiresAt, resendAvailableAt, sendBlockedUntil: 0 });
+        return getVerification();
+      }
+      const next = makeSession(payload, current.email);
+      await persist(next, epoch);
+      checkProcess();
+      publishVerification(null);
+      session = next;
+      onChange(session);
+      return session;
+    } finally { if (verificationFlight === flight) verificationFlight = null; }
+  }
+
+  function sendVerificationEmail(email) {
+    const address = email === undefined ? undefined : email.trim().toLowerCase();
+    return verificationRequest("email-send", address === undefined ? {} : { email: address });
+  }
+
+  async function verifyEmail(code) {
+    if (typeof code !== "string" || !/^[0-9]{6}$/.test(code)) throw new ApiError("Wpisz sześciocyfrowy kod z wiadomości.");
+    return verificationRequest("email-verify", { code });
   }
 
   function refresh() {
@@ -199,10 +310,11 @@ export function createSessionClient({ baseUrl, storage, fetchImpl = (...args) =>
   async function forgotPassword(email) {
     const response = await send("/auth/password/forgot", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }) });
-    if (!response.ok) throw await responseError(response);
+    if (!response.ok) throw await responseError(response, "forgot", now());
   }
 
   return { restore, request, logout, forgotPassword, clearLocal, getSession: () => session,
+    getVerification, sendVerificationEmail, verifyEmail, cancelVerification: () => clearLocal(),
     login: (email, password) => authenticate("/auth/login", email, password),
     register: (email, password) => authenticate("/auth/register", email, password) };
 }

@@ -12,7 +12,9 @@ Ta wersja wymaga kontraktu kont i sesji z [Fridge PR #2](https://github.com/mkli
 
 ## Konto i sesja
 
-- Rejestracja: e-mail do 64 znaków, hasło co najmniej 8 znaków i maksymalnie 72 bajty UTF-8; automatyczne logowanie po utworzeniu konta.
+- Rejestracja: e-mail do 64 znaków, hasło co najmniej 8 znaków i maksymalnie 72 bajty UTF-8; odpowiedź 202 otwiera potwierdzanie adresu sześciocyfrowym kodem. Konto i sesja powstają dopiero po potwierdzeniu.
+- Logowanie: potwierdzone konto od razu otrzymuje sesję; pozostałe przechodzą przez ekran kodu. Dotychczasowy login nadal działa, a stary użytkownik może poprawić adres e-mail bez utraty danych.
+- Tymczasowy token weryfikacji jest wyłącznie w pamięci, nie daje dostępu do API aplikacji i nie trafia do URL ani magazynu sesji. Restart aplikacji wymaga ponowienia logowania/rejestracji. [Kontrakt, błędy i test ręczny](docs/EMAIL_VERIFICATION.md).
 - Hasło: ekran wysyła prośbę o wiadomość; ustawienie nowego hasła odbywa się przez stronę API pod linkiem z e-maila. Backend potrzebuje działającej konfiguracji poczty i publicznego adresu strony resetowania.
 - Usuwanie konta: Ustawienia → Twoje konto → Usuń konto; potwierdzenie aktualnym hasłem. Błędne hasło nie ponawia DELETE i nie wylogowuje użytkownika.
 - Tokeny natywne przechowuje `expo-secure-store`. Dawne tokeny z AsyncStorage są usuwane; istniejący użytkownik musi zalogować się ponownie po migracji. W podglądzie WWW sesja żyje wyłącznie w pamięci, więc odświeżenie strony wymaga ponownego logowania.

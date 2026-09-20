@@ -21,7 +21,7 @@ async function mockApi(page, { roles = ['USER'], premium = false, remaining = .7
 }
 async function login(page) {
   await page.goto('/');
-  await page.getByLabel('E-mail', { exact: true }).filter({ visible: true }).fill('test@example.com');
+  await page.getByLabel('E-mail lub login', { exact: true }).filter({ visible: true }).fill('test@example.com');
   await page.getByLabel('Hasło', { exact: true }).filter({ visible: true }).fill('password1');
   await page.getByRole('button', { name: 'Zaloguj się', exact: true }).click();
   await expect(page.getByText('Kuchnia', { exact: true })).toBeVisible();

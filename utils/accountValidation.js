@@ -1,6 +1,6 @@
-export function emailError(email) {
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > 64) {
-    return "Podaj poprawny adres e-mail (maksymalnie 64 znaki).";
+export function emailError(email, maxLength = 64) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) || email.trim().length > maxLength) {
+    return `Podaj poprawny adres e-mail (maksymalnie ${maxLength} znaki).`;
   }
   return null;
 }

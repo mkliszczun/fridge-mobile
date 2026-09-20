@@ -10,6 +10,7 @@ const fridgeKey = (id) => `active_fridge:${id}`;
 
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
+  const [verification, setVerification] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sessionMessage, setSessionMessage] = useState(null);
   const [activeFridge, setActiveFridgeState] = useState(null);
@@ -22,6 +23,7 @@ export function AuthProvider({ children }) {
   const clientRef = useRef(null);
   if (!clientRef.current) clientRef.current = createSessionClient({
     baseUrl: API_BASE_URL, storage: credentialStorage, onChange: setSession,
+    onVerificationChange: setVerification,
     onExpired: () => setSessionMessage("Sesja wygasła. Zaloguj się ponownie."),
   });
   const client = clientRef.current;
@@ -118,6 +120,9 @@ export function AuthProvider({ children }) {
     return client.register(email, password);
   }, [client]);
   const forgotPassword = useCallback(email => client.forgotPassword(email), [client]);
+  const sendVerificationEmail = useCallback(email => client.sendVerificationEmail(email), [client]);
+  const verifyEmail = useCallback(code => client.verifyEmail(code), [client]);
+  const cancelVerification = useCallback(() => client.cancelVerification(), [client]);
   const logout = useCallback(() => client.logout(), [client]);
 
   const setActiveFridge = useCallback(async (id) => {
@@ -143,12 +148,14 @@ export function AuthProvider({ children }) {
   const value = useMemo(() => ({
     sessionId: session?.sessionId || null, user: session?.email || null, userId: session?.userId || null,
     isAdmin: session?.roles?.some(role => role === "ADMIN" || role === "ROLE_ADMIN") || false,
-    loading, sessionMessage, activeFridge, profile, profileError, isPremium,
+    loading, sessionMessage, verification, activeFridge, profile, profileError, isPremium,
     adsEnabled: profile ? !isPremium || profile.adsEnabled !== false : false,
     aiUsage: currentUsage, usageError, canUseAi: blockedUntil <= clock && (!currentUsage || Number(currentUsage.remainingUsd) > 0),
     apiFetch, login, register, forgotPassword, logout, deleteAccount, setActiveFridge, refreshAccount, refreshUsage,
-  }), [session, loading, sessionMessage, activeFridge, profile, profileError, isPremium, currentUsage, usageError,
-    blockedUntil, clock, apiFetch, login, register, forgotPassword, logout, deleteAccount, setActiveFridge, refreshAccount, refreshUsage]);
+    sendVerificationEmail, verifyEmail, cancelVerification,
+  }), [session, loading, sessionMessage, verification, activeFridge, profile, profileError, isPremium, currentUsage, usageError,
+    blockedUntil, clock, apiFetch, login, register, forgotPassword, logout, deleteAccount, setActiveFridge, refreshAccount, refreshUsage,
+    sendVerificationEmail, verifyEmail, cancelVerification]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

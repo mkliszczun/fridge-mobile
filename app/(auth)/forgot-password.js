@@ -12,7 +12,7 @@ export default function ForgotPasswordScreen() {
   const submitting = useRef(false);
   const submit = async () => {
     if (submitting.current) return;
-    const invalid = emailError(email);
+    const invalid = emailError(email, 254);
     if (invalid) { setError(invalid); return; }
     submitting.current = true; setBusy(true); setError(null);
     try { await forgotPassword(email.trim()); setSent(true); }
@@ -22,7 +22,7 @@ export default function ForgotPasswordScreen() {
   return <AccountPage title="Odzyskaj dostęp" subtitle="Wyślemy Ci link do ustawienia nowego hasła." back="/login">
     <AccountCard>
       {sent ? <AccountMessage>Jeśli konto z tym adresem istnieje, otrzymasz wiadomość z linkiem ważnym przez 30 minut. Sprawdź też folder spam. Ustaw hasło w przeglądarce, a następnie wróć do aplikacji i zaloguj się.</AccountMessage> : <>
-        <AccountField label="E-mail" placeholder="twoj@email.pl" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" maxLength={64} value={email} onChangeText={setEmail} editable={!busy} onSubmitEditing={submit} returnKeyType="send" />
+        <AccountField label="E-mail" placeholder="twoj@email.pl" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" maxLength={254} value={email} onChangeText={setEmail} editable={!busy} onSubmitEditing={submit} returnKeyType="send" />
         <AccountMessage error>{error}</AccountMessage>
         <AccountButton title="Wyślij link" busy={busy} onPress={submit} />
       </>}
