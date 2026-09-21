@@ -107,3 +107,33 @@ test('administrator retains catalog edit/delete controls', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Usuń Mleko' })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('blocked scanner permission shows recovery instructions without repeating permission requests', async ({ page }) => {
+  const { errors } = await mockApi(page);
+  await page.addInitScript(() => {
+    window.cameraQueries = 0;
+    window.cameraRequests = 0;
+    const query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = async descriptor => {
+      if (descriptor.name !== 'camera') return query(descriptor);
+      window.cameraQueries++;
+      return { state: 'denied' };
+    };
+    navigator.mediaDevices.getUserMedia = async () => {
+      window.cameraRequests++;
+      throw new DOMException('Permission denied', 'NotAllowedError');
+    };
+  });
+  await login(page);
+  await page.getByRole('button', { name: 'Skanuj produkt', exact: true }).click();
+  await expect(page.getByText('Potrzebny dostęp do aparatu')).toBeVisible();
+  await expect(page.getByText(/Dostęp do aparatu jest zablokowany/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Zezwól', exact: true })).toHaveCount(0);
+  const queries = await page.evaluate(() => window.cameraQueries);
+  await page.getByRole('button', { name: 'Sprawdź ponownie', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.cameraQueries)).toBeGreaterThan(queries);
+  expect(await page.evaluate(() => window.cameraRequests)).toBe(0);
+  await page.getByRole('button', { name: 'Wróć', exact: true }).click();
+  await expect(page.getByText('Kuchnia', { exact: true })).toBeVisible();
+  expect(errors).toEqual([]);
+});

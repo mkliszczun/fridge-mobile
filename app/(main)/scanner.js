@@ -6,15 +6,23 @@ import {
   Pressable,
   Alert,
   ActivityIndicator,
+  AppState,
+  Linking,
+  Platform,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
+import { cameraPermissionState, handleCameraPermissionAction } from "../../utils/cameraPermission";
 
 export default function ScannerScreen() {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, refreshPermission] = useCameraPermissions();
+  const requestedInitially = useRef(false);
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const [permissionError, setPermissionError] = useState(null);
+  const permissionState = cameraPermissionState(permission, Platform.OS);
   const [ready, setReady] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [lastCode, setLastCode] = useState(null);
@@ -24,9 +32,34 @@ export default function ScannerScreen() {
   const router = useRouter();
 
   useEffect(() => {
-    if (!permission) return;
-    if (!permission.granted) requestPermission();
+    if (permission?.status !== "undetermined" || permission.canAskAgain === false || requestedInitially.current) return;
+    requestedInitially.current = true;
+    requestPermission().catch(() => setPermissionError("Nie udało się sprawdzić dostępu do aparatu. Spróbuj ponownie."));
   }, [permission, requestPermission]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", state => {
+      if (state === "active") refreshPermission().catch(() => setPermissionError("Nie udało się odświeżyć zgody na aparat."));
+    });
+    return () => subscription.remove();
+  }, [refreshPermission]);
+
+  const handlePermission = async () => {
+    if (permissionBusy) return;
+    setPermissionBusy(true);
+    setPermissionError(null);
+    try {
+      await handleCameraPermissionAction(permission, {
+        requestPermission, refreshPermission, openSettings: () => Linking.openSettings(),
+      }, Platform.OS);
+    } catch {
+      setPermissionError(permissionState === "settings"
+        ? "Otwórz ustawienia ręcznie i zezwól tej aplikacji na dostęp do aparatu."
+        : "Nie udało się uzyskać zgody. Spróbuj ponownie.");
+    } finally {
+      setPermissionBusy(false);
+    }
+  };
 
   const onBarcodeScanned = ({ data, type }) => {
     if (!ready || processing || frozen) return;
@@ -148,13 +181,24 @@ export default function ScannerScreen() {
     }
   };
 
-  if (!permission) return null;
+  if (!permission) return <View style={styles.center}><ActivityIndicator accessibilityLabel="Sprawdzam dostęp do aparatu" /></View>;
   if (!permission.granted)
     return (
       <View style={styles.center}>
         <Text style={styles.title}>Potrzebny dostęp do aparatu</Text>
-        <Pressable style={styles.primaryBtn} onPress={requestPermission}>
-          <Text style={styles.primaryBtnText}>Zezwól</Text>
+        {permissionState === "settings" && <Text style={styles.permissionHint}>
+          {Platform.OS === "web"
+            ? "Dostęp do aparatu jest zablokowany. Włącz go w ustawieniach tej strony w przeglądarce, a potem sprawdź ponownie."
+            : "Dostęp do aparatu jest zablokowany. Włącz go w ustawieniach telefonu i wróć do aplikacji."}
+        </Text>}
+        {permissionError && <Text accessibilityRole="alert" style={styles.permissionHint}>{permissionError}</Text>}
+        <Pressable accessibilityRole="button" disabled={permissionBusy} style={styles.primaryBtn} onPress={handlePermission}>
+          <Text style={styles.primaryBtnText}>{permissionState === "settings"
+            ? Platform.OS === "web" ? "Sprawdź ponownie" : "Otwórz ustawienia"
+            : "Zezwól"}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" style={styles.primaryBtn} onPress={() => router.back()}>
+          <Text style={styles.primaryBtnText}>Wróć</Text>
         </Pressable>
       </View>
     );
@@ -196,6 +240,7 @@ export default function ScannerScreen() {
 const styles = StyleSheet.create({
   center:{ flex:1, alignItems:"center", justifyContent:"center", backgroundColor:"#F7F7FB" },
   title:{ fontSize:18, fontWeight:"600" },
+  permissionHint:{ textAlign:"center", paddingHorizontal:24, marginTop:12, color:"#404040" },
   primaryBtn:{ backgroundColor:"#1F6FEB", paddingHorizontal:16, paddingVertical:12, borderRadius:12, marginTop:12 },
   primaryBtnText:{ color:"#fff", fontWeight:"700" },
 
