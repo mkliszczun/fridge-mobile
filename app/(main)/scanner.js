@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -11,11 +11,12 @@ import {
   Platform,
 } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
 import { cameraPermissionState, handleCameraPermissionAction } from "../../utils/cameraPermission";
+import { normalizeOffProduct, productScanParams } from "../../utils/productDraft";
 
 export default function ScannerScreen() {
   const [permission, requestPermission, refreshPermission] = useCameraPermissions();
@@ -23,13 +24,31 @@ export default function ScannerScreen() {
   const [permissionBusy, setPermissionBusy] = useState(false);
   const [permissionError, setPermissionError] = useState(null);
   const permissionState = cameraPermissionState(permission, Platform.OS);
-  const [ready, setReady] = useState(false);
+  const readyRef = useRef(false);
   const [processing, setProcessing] = useState(false);
   const [lastCode, setLastCode] = useState(null);
-  const [frozen, setFrozen] = useState(false);
+  const frozenRef = useRef(false);
   const pendingRef = useRef(null);
   const { apiFetch, sessionId } = useAuth();
   const router = useRouter();
+  const { mode } = useLocalSearchParams();
+  const catalogMode = mode === "catalog";
+  const [active, setActive] = useState(false);
+  const activeRef = useRef(false);
+  const lookupController = useRef(null);
+  const retryTimer = useRef(null);
+
+  useFocusEffect(useCallback(() => {
+    activeRef.current = true;
+    setActive(true); readyRef.current = false; setProcessing(false); frozenRef.current = false; setLastCode(null);
+    pendingRef.current = null;
+    return () => {
+      activeRef.current = false;
+      setActive(false);
+      lookupController.current?.abort();
+      clearTimeout(retryTimer.current);
+    };
+  }, [sessionId]));
 
   useEffect(() => {
     if (permission?.status !== "undetermined" || permission.canAskAgain === false || requestedInitially.current) return;
@@ -62,7 +81,7 @@ export default function ScannerScreen() {
   };
 
   const onBarcodeScanned = ({ data, type }) => {
-    if (!ready || processing || frozen) return;
+    if (!activeRef.current || !readyRef.current || frozenRef.current) return;
 
     const allowed = ["ean13", "ean8", "org.gs1.EAN-13", "org.gs1.EAN-8"];
     if (!allowed.includes(type)) {
@@ -75,57 +94,35 @@ export default function ScannerScreen() {
     lookupProduct(data);
   };
 
-  const fetchOffProduct = async (ean) => {
-    const res = await apiFetch(`${API_BASE_URL}/api/off/${encodeURIComponent(ean)}`, {
+  const fetchOffProduct = async (ean, controller) => {
+    let offData = null;
+    try {
+      const res = await apiFetch(`${API_BASE_URL}/api/off/${encodeURIComponent(ean)}`, {
       method: "GET",
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
 
       },
     });
-    const payload = await res.json().catch(() => null);
-    if (!res.ok || !payload?.product) {
-      Alert.alert("Nieznany produkt", `Kod ${ean} jest nieznany. Dodaj go ręcznie.`);
-      router.push({
-        pathname: "/add-product",
-        params: {
-          prefillName: "",
-          prefillEan: ean,
-        },
-      });
-      return;
+      if (res.ok) offData = normalizeOffProduct(await res.json().catch(() => null));
+    } catch (error) {
+      if (controller.signal.aborted) return;
     }
-
-    const product = payload.product;
-    const productName =
-      (typeof product?.productName === "string" && product.productName.trim()) ||
-      (typeof product?.product_name === "string" && product.product_name.trim()) ||
-      (typeof product?.name === "string" && product.name.trim()) ||
-      "";
-    router.push({
+    if (!activeRef.current || controller.signal.aborted) return;
+    if (!offData?.productName) Alert.alert("Brak danych produktu", "Wpisz nazwę ręcznie. Następnie możesz uzupełnić pozostałe pola przez AI.");
+    const destination = {
       pathname: "/add-product",
-      params: {
-        prefillName: productName,
-        prefillEan: ean,
-        prefillBrand: product?.brands || "",
-        prefillCategories: product?.categoriesTags ? JSON.stringify(product.categoriesTags) : "",
-      },
-    });
+      params: productScanParams(ean, offData, `${Date.now()}-${ean}`),
+    };
+    if (catalogMode) router.dismissTo(destination);
+    else router.replace(destination);
   };
 
-  useEffect(() => {
-    return () => {
-      setProcessing(false);
-      setFrozen(false);
-      setLastCode(null);
-      pendingRef.current = null;
-    };
-  }, []);
-
-  const handleCameraReady = () => setReady(true);
+  const handleCameraReady = () => { readyRef.current = true; };
 
   const handleCameraMountError = ({ message }) => {
-    setReady(false);
+    readyRef.current = false;
     Alert.alert(
       "Nie udało się uruchomić aparatu",
       message || "Zamknij skaner i spróbuj ponownie."
@@ -133,30 +130,42 @@ export default function ScannerScreen() {
   };
 
   const lookupProduct = async (ean) => {
+    const controller = new AbortController();
+    lookupController.current = controller;
     setProcessing(true);
-    setFrozen(true);
+    frozenRef.current = true;
     setLastCode(ean);
     let success = false;
     try {
       const res = await apiFetch(`${API_BASE_URL}/api/products/${encodeURIComponent(ean)}`, {
         method: "GET",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
 
         },
       });
+      if (!activeRef.current || controller.signal.aborted) return;
       if (res.status === 404) {
-        await fetchOffProduct(ean);
+        await fetchOffProduct(ean, controller);
         success = true;
         return;
       }
       const payload = await res.json().catch(() => null);
+      if (!activeRef.current || controller.signal.aborted) return;
       if (!res.ok || !payload) {
         const message = payload?.message || `Kod ${ean} nie został znaleziony.`;
         throw new Error(message);
       }
 
-      router.push({
+      if (catalogMode) {
+        Alert.alert("Produkt już istnieje", `${payload.name || ean} jest już w katalogu. Nie trzeba dodawać go ponownie.`);
+        success = true;
+        router.back();
+        return;
+      }
+
+      router.replace({
         pathname: "/add-fridge-item",
         params: {
           productId: String(payload.id ?? ""),
@@ -170,14 +179,14 @@ export default function ScannerScreen() {
       });
       success = true;
     } catch (err) {
-      Alert.alert("Brak produktu", `${String(err)}\nEAN: ${ean}`);
+      if (activeRef.current && !controller.signal.aborted) Alert.alert("Brak produktu", `${String(err)}\nEAN: ${ean}`);
     } finally {
-      setProcessing(false);
-      setTimeout(() => {
-        setFrozen(false);
+      if (activeRef.current && !controller.signal.aborted) setProcessing(false);
+      if (!success && activeRef.current && !controller.signal.aborted) retryTimer.current = setTimeout(() => {
+        frozenRef.current = false;
         setLastCode(null);
         pendingRef.current = null;
-      }, success ? 1000 : 600);
+      }, 600);
     }
   };
 
@@ -205,7 +214,7 @@ export default function ScannerScreen() {
 
   return (
     <View style={styles.scannerWrap}>
-      <CameraView
+      {active && <CameraView
         style={styles.camera}
         facing="back"
         zoom={0}
@@ -214,7 +223,7 @@ export default function ScannerScreen() {
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8"] }}
         onCameraReady={handleCameraReady}
         onMountError={handleCameraMountError}
-      />
+      />}
       <View style={styles.overlay}>
         <Text style={styles.hint}>Nakieruj na kod EAN</Text>
         <Pressable style={styles.secondaryBtn} onPress={() => router.back()}>

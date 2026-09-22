@@ -14,7 +14,7 @@ export default function AiBudgetNotice() {
       {!canUseAi ? "Dzienny limit AI został wykorzystany" : percent !== null ? `Pozostało ${percent}% dziennego limitu AI` : "Dzienny limit AI"}
     </Text>
     <Text style={{ color: "#667579", fontSize: 13, lineHeight: 19 }}>
-      {reset ? `Odnowienie: ${reset} (Twój czas lokalny).` : "Limit odnawia się codziennie o północy UTC."} Limit jest wspólny dla przepisów, posiłków i zakupów, także w Premium.
+      {reset ? `Odnowienie: ${reset} (Twój czas lokalny).` : "Limit odnawia się codziennie o północy UTC."} Limit jest wspólny dla produktów, przepisów, posiłków i zakupów, także w Premium.
     </Text>
     {usageError && <Pressable accessibilityRole="button" onPress={refreshUsage} style={{ paddingVertical: 10 }}><Text style={{ color: "#913D34" }}>Nie udało się sprawdzić zużycia. Dotknij, aby ponowić.</Text></Pressable>}
   </View>;

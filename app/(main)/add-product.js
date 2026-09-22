@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -15,15 +15,17 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { StatusBar } from "expo-status-bar";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter, useLocalSearchParams, useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { API_BASE_URL } from "../../constants/api";
 import { useAuth } from "../../context/AuthContext";
+import AiBudgetNotice from "../../components/AiBudgetNotice";
+import { mergeProductProposal, parseOpeningDays } from "../../utils/productDraft";
 
 export default function AddProductScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { apiFetch, sessionId } = useAuth();
+  const { apiFetch, sessionId, canUseAi } = useAuth();
   const [form, setForm] = useState({ name: "", ean: "", defaultUnit: "" });
   const [selectedType, setSelectedType] = useState(null);
   const [types, setTypes] = useState([]);
@@ -36,9 +38,23 @@ export default function AddProductScreen() {
   const [showUnitPicker, setShowUnitPicker] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [prefillApplied, setPrefillApplied] = useState(false);
+  const prefillApplied = useRef(null);
   const [brand, setBrand] = useState("");
-  const [categoryHints, setCategoryHints] = useState([]);
+  const [offContext, setOffContext] = useState(null);
+  const [openingDays, setOpeningDays] = useState("");
+  const [categoryDays, setCategoryDays] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [aiMessage, setAiMessage] = useState(null);
+  const [formError, setFormError] = useState(null);
+  const generation = useRef(null);
+  const saving = useRef(false);
+  const busy = generating || submitting;
+
+  useFocusEffect(useCallback(() => () => {
+    generation.current?.abort();
+    generation.current = null;
+    setGenerating(false);
+  }, [sessionId]));
 
   const headers = useMemo(
     () => ({
@@ -109,55 +125,91 @@ export default function AddProductScreen() {
   }, [loadTypes, loadUnits]);
 
   useEffect(() => {
-    if (prefillApplied) return;
-
     const nameParam = readParam(params?.prefillName);
     const eanParam = readParam(params?.prefillEan);
     const brandParam = readParam(params?.prefillBrand);
     const categoriesParam = readParam(params?.prefillCategories);
 
     if (!nameParam && !eanParam && !brandParam && !categoriesParam) return;
+    const resultId = readParam(params?.scanResultId) || JSON.stringify([nameParam, eanParam, brandParam, categoriesParam]);
+    if (prefillApplied.current === resultId) return;
+    prefillApplied.current = resultId;
 
     setForm((prev) => ({
       ...prev,
-      name: nameParam ? String(nameParam) : prev.name,
+      name: prev.name.trim() ? prev.name : String(nameParam || ""),
       ean: eanParam ? String(eanParam) : prev.ean,
     }));
 
-    if (brandParam) setBrand(String(brandParam));
-
+    if (brandParam) setBrand(prev => prev.trim() ? prev : String(brandParam));
+    let categoriesTags = [];
     if (typeof categoriesParam === "string" && categoriesParam) {
       try {
         const parsed = JSON.parse(categoriesParam);
-        if (Array.isArray(parsed)) setCategoryHints(parsed);
+        if (Array.isArray(parsed)) categoriesTags = parsed.filter(tag => typeof tag === "string" && tag.trim()).map(tag => tag.slice(0, 120)).slice(0, 40);
       } catch {}
     }
 
-    setPrefillApplied(true);
-  }, [params, prefillApplied]);
-
-  useEffect(() => {
-    if (!prefillApplied || !types.length || selectedType) return;
-    if (!categoryHints.length) return;
-
-    const match = types.find((type) => {
-      const label = getDisplayName(type)?.toLowerCase();
-      if (!label) return false;
-      return categoryHints.some((tag) => {
-        if (!tag) return false;
-        const normalized = String(tag).toLowerCase().split(":").pop();
-        return normalized && label.includes(normalized);
-      });
-    });
-
-    if (match) setSelectedType(normalizeSelection(match));
-  }, [prefillApplied, types, selectedType, categoryHints]);
+    setOffContext({ ean: String(eanParam || ""), data: {
+      productName: String(nameParam || "").slice(0, 255), brands: String(brandParam || "").slice(0, 255), categoriesTags,
+    } });
+    setAiMessage(null);
+  }, [params]);
 
   const updateForm = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const handleGenerate = async () => {
+    if (generation.current || saving.current || !canUseAi) return;
+    setFormError(null);
+    setAiMessage(null);
+    if (!form.name.trim()) { setFormError("Wpisz nazwę produktu lub zeskanuj jego kod."); return; }
+    let days;
+    try { days = parseOpeningDays(openingDays); } catch (error) { setFormError(error.message); return; }
+    const controller = new AbortController();
+    generation.current = controller;
+    setGenerating(true);
+    try {
+      const current = {
+        name: form.name.trim(), ean: form.ean.trim() || null, brand: brand.trim() || null,
+        productType: resolveProductTypeValue(selectedType), defaultUnit: resolveUnitValue(selectedUnit),
+        shelfLifeAfterOpeningDays: days,
+      };
+      const res = await apiFetch(`${API_BASE_URL}/api/ai/products/generate`, {
+        method: "POST", headers, signal: controller.signal,
+        body: JSON.stringify({ ...current, offData: offContext?.ean === current.ean ? offContext.data : null }),
+      });
+      const proposal = await res.json().catch(() => null);
+      if (generation.current !== controller) return;
+      if (!res.ok) throw new Error(res.status === 429 ? "Wykorzystano limit AI. Możesz nadal uzupełnić i zapisać produkt ręcznie."
+        : res.status === 503 ? "AI jest chwilowo niedostępne. Spróbuj ponownie lub uzupełnij produkt ręcznie."
+        : "Nie udało się uzupełnić produktu przez AI. Spróbuj ponownie lub wpisz dane ręcznie.");
+      const merged = mergeProductProposal(current, proposal);
+      const type = types.find(item => resolveProductTypeValue(normalizeSelection(item)) === merged.productType);
+      const unit = unitOptions.find(item => resolveUnitValue(normalizeSelection(item)) === merged.defaultUnit);
+      if (!type || !unit) throw new Error("AI zwróciło nieprawidłową kategorię lub jednostkę. Uzupełnij dane ręcznie.");
+      parseOpeningDays(merged.shelfLifeAfterOpeningDays);
+      setBrand(merged.brand || "");
+      setOpeningDays(merged.shelfLifeAfterOpeningDays == null ? "" : String(merged.shelfLifeAfterOpeningDays));
+      setSelectedType(normalizeSelection(type));
+      setSelectedUnit(normalizeSelection(unit));
+      setCategoryDays(Number.isInteger(proposal?.defaultExpirationDays) ? proposal.defaultExpirationDays : null);
+      setAiMessage("Uzupełniono brakujące pola. Sprawdź dane, popraw je w razie potrzeby i wybierz „Zapisz produkt”.");
+    } catch (error) {
+      if (generation.current === controller && !controller.signal.aborted) {
+        setFormError(error.status === 429 ? "Wykorzystano limit AI. Możesz nadal uzupełnić i zapisać produkt ręcznie."
+          : error.status === 503 ? "AI jest chwilowo niedostępne. Spróbuj ponownie lub uzupełnij produkt ręcznie."
+          : error.message);
+      }
+    } finally {
+      if (generation.current === controller) { generation.current = null; setGenerating(false); }
+    }
+  };
+
   const handleSubmit = async () => {
+    if (generation.current || saving.current) return;
+    setFormError(null);
     if (!form.name.trim()) {
       Alert.alert("Brak nazwy", "Podaj nazwę produktu");
       return;
@@ -183,6 +235,9 @@ export default function AddProductScreen() {
       return;
     }
 
+    let days;
+    try { days = parseOpeningDays(openingDays); } catch (error) { setFormError(error.message); return; }
+    saving.current = true;
     setSubmitting(true);
     try {
       const res = await apiFetch(`${API_BASE_URL}/api/products`, {
@@ -193,6 +248,8 @@ export default function AddProductScreen() {
           ean: form.ean.trim() || null,
           productType: productTypeValue,
           defaultUnit: unitValue,
+          brand: brand.trim() || null,
+          shelfLifeAfterOpeningDays: days,
         }),
       });
       const payload = await res.json().catch(() => null);
@@ -207,6 +264,7 @@ export default function AddProductScreen() {
     } catch (err) {
       Alert.alert("Błąd", err.message || "Nie udało się dodać produktu");
     } finally {
+      saving.current = false;
       setSubmitting(false);
     }
   };
@@ -291,6 +349,7 @@ const resolveUnitValue = (selection) => {
       <Pressable
         onPress={() => {
           setSelectedType(normalizeSelection(item));
+          setCategoryDays(null);
           setShowTypePicker(false);
         }}
         style={({ pressed }) => [styles.typeOption, isSelected && styles.typeOptionSelected, pressed && styles.typeOptionPressed]}
@@ -363,21 +422,12 @@ const resolveUnitValue = (selection) => {
               end={{ x: 1, y: 1 }}
               style={styles.card}
             >
-              {brand ? (
-                <View style={styles.brandBox}>
-                  <View style={styles.brandIcon}>
-                    <Text style={styles.brandIconText}>✓</Text>
-                  </View>
-                  <View style={styles.brandCopy}>
-                    <Text style={styles.brandLabel}>ROZPOZNANA MARKA</Text>
-                    <Text style={styles.brandValue}>{brand}</Text>
-                  </View>
-                </View>
-              ) : null}
-
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Nazwa produktu</Text>
                 <TextInput
+                  accessibilityLabel="Nazwa produktu"
+                  editable={!busy}
+                  maxLength={255}
                   placeholder="np. Jogurt naturalny"
                   placeholderTextColor="#98A3A2"
                   value={form.name}
@@ -393,6 +443,9 @@ const resolveUnitValue = (selection) => {
                   <Text style={styles.optionalLabel}>OPCJONALNIE</Text>
                 </View>
                 <TextInput
+                  accessibilityLabel="Kod EAN"
+                  editable={!busy}
+                  maxLength={32}
                   placeholder="np. 5901234123457"
                   placeholderTextColor="#98A3A2"
                   value={form.ean}
@@ -400,18 +453,47 @@ const resolveUnitValue = (selection) => {
                   onChangeText={(value) => updateForm("ean", value)}
                   style={styles.input}
                 />
+                <Pressable accessibilityRole="button" disabled={busy}
+                  style={[styles.aiButton, busy && styles.submitDisabled]}
+                  onPress={() => router.push({ pathname: "/scanner", params: { mode: "catalog" } })}>
+                  <Text style={styles.aiButtonText}>Skanuj kod produktu</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Marka (opcjonalnie)</Text>
+                <TextInput accessibilityLabel="Marka" value={brand} onChangeText={setBrand}
+                  editable={!busy} maxLength={255} placeholder="np. Pilos" style={styles.input} />
+              </View>
+
+              <View style={styles.fieldGroup}>
+                <Text style={styles.hintText}>Wpisz nazwę lub zeskanuj kod. AI uzupełni tylko brakujące pola, korzystając także z danych Open Food Facts, jeśli są dostępne.</Text>
+                <AiBudgetNotice />
+                <Pressable accessibilityRole="button"
+                  disabled={busy || !canUseAi || typesLoading || unitsLoading || !types.length || !unitOptions.length}
+                  style={[styles.aiButton, (busy || !canUseAi || typesLoading || unitsLoading || !types.length || !unitOptions.length) && styles.submitDisabled]}
+                  onPress={handleGenerate}>
+                  {generating ? <ActivityIndicator color="#304B54" accessibilityLabel="AI uzupełnia produkt" /> : <Text style={styles.aiButtonText}>Uzupełnij z AI</Text>}
+                </Pressable>
+                {generating && <Pressable accessibilityRole="button" style={styles.aiButton} onPress={() => {
+                  generation.current?.abort(); generation.current = null; setGenerating(false);
+                }}><Text style={styles.aiButtonText}>Anuluj AI</Text></Pressable>}
+                {aiMessage && <Text accessibilityLiveRegion="polite" style={styles.hintText}>{aiMessage}</Text>}
+                {formError && <Text accessibilityRole="alert" style={styles.typesErrorText}>{formError}</Text>}
               </View>
 
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Domyślna jednostka</Text>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Domyślna jednostka"
                   style={({ pressed }) => [
                     styles.selector,
                     showUnitPicker && styles.selectorActive,
                     pressed && styles.selectorPressed,
                   ]}
                   onPress={() => setShowUnitPicker(true)}
-                  disabled={unitsLoading}
+                  disabled={unitsLoading || busy}
                 >
                   {unitsLoading ? (
                     <ActivityIndicator color="#304B54" />
@@ -435,13 +517,15 @@ const resolveUnitValue = (selection) => {
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Typ produktu</Text>
                 <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Typ produktu"
                   style={({ pressed }) => [
                     styles.selector,
                     showTypePicker && styles.selectorActive,
                     pressed && styles.selectorPressed,
                   ]}
                   onPress={() => setShowTypePicker(true)}
-                  disabled={typesLoading}
+                  disabled={typesLoading || busy}
                 >
                   {typesLoading ? (
                     <ActivityIndicator color="#304B54" />
@@ -462,14 +546,27 @@ const resolveUnitValue = (selection) => {
                 ) : null}
               </View>
 
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Dni ważności po otwarciu (opcjonalnie)</Text>
+                <TextInput accessibilityLabel="Dni ważności po otwarciu" value={openingDays}
+                  onChangeText={setOpeningDays} editable={!busy} keyboardType="number-pad" maxLength={4}
+                  placeholder="Puste = domyślne dla kategorii" style={styles.input} />
+                <Text style={styles.hintText}>0 oznacza zużycie w dniu otwarcia. Wartość AI jest szacunkiem — sprawdź etykietę; podany na niej termin i sposób przechowywania mają pierwszeństwo.</Text>
+                <Text style={styles.hintText}>{categoryDays === null
+                  ? "Domyślna ważność przed otwarciem wynika z kategorii. Termin konkretnego opakowania podajesz przy dodawaniu do lodówki."
+                  : `Domyślna ważność z kategorii: ${categoryDays} dni. Termin konkretnego opakowania podajesz przy dodawaniu do lodówki.`}</Text>
+              </View>
+
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Zapisz produkt"
                 style={({ pressed }) => [
                   styles.submitButton,
-                  submitting && styles.submitDisabled,
-                  pressed && !submitting && styles.submitPressed,
+                  busy && styles.submitDisabled,
+                  pressed && !busy && styles.submitPressed,
                 ]}
                 onPress={handleSubmit}
-                disabled={submitting}
+                disabled={busy}
               >
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
@@ -561,6 +658,9 @@ const resolveUnitValue = (selection) => {
 }
 
 const styles = StyleSheet.create({
+  aiButton: { padding: 14, borderRadius: 14, backgroundColor: "#E1EBE5", alignItems: "center", marginTop: 10 },
+  aiButtonText: { color: "#304B54", fontWeight: "700" },
+  hintText: { color: "#667579", fontSize: 13, lineHeight: 19, marginTop: 8 },
   background: { flex: 1 },
   safeArea: { flex: 1 },
   keyboardView: { flex: 1 },
