@@ -218,7 +218,7 @@ export default function ScannerScreen() {
         style={styles.camera}
         facing="back"
         zoom={0}
-        autofocus="on"
+        autofocus="off"
         onBarcodeScanned={onBarcodeScanned}
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "ean8"] }}
         onCameraReady={handleCameraReady}
